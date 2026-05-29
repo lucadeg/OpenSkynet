@@ -153,15 +153,28 @@ class ManagerAgent:
             text = response.text or ""
             text = self._extract_json(text)
             if text:
-                return json.loads(text)
+                data = json.loads(text)
+                task_complete = data.get("task_complete", False)
+                if not isinstance(task_complete, bool):
+                    task_complete = str(task_complete).lower() in ("true", "yes", "1")
+                confidence = float(data.get("confidence", 0.3))
+                confidence = max(0.0, min(1.0, confidence))
+                return {
+                    "task_complete": task_complete,
+                    "confidence": confidence,
+                    "reasoning": data.get("reasoning", ""),
+                    "issues": data.get("issues", []),
+                    "suggested_fix": data.get("suggested_fix"),
+                }
         except Exception as e:
-            logger.debug("reflect_failed", error=str(e))
+            logger.warning("reflect_failed", error=str(e))
 
         return {
-            "task_complete": True,
-            "confidence": 0.5,
-            "reasoning": "Defaulting to complete due to reflection failure.",
-            "issues": [],
+            "task_complete": False,
+            "confidence": 0.2,
+            "reasoning": "Reflection failed — defaulting to incomplete for safety.",
+            "issues": ["reflection_llm_failure"],
+            "suggested_fix": None,
         }
 
     async def _build_prompt(

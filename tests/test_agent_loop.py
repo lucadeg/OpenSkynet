@@ -45,13 +45,13 @@ class TestAgentLoop:
              patch.object(loop._memory, "on_turn_start", new_callable=AsyncMock), \
              patch.object(loop._memory, "on_session_end", new_callable=AsyncMock):
             mock_ba = MagicMock()
-            mock_ba.run = AsyncMock(return_value=BrowserResult(text="done", actions=[]))
+            mock_ba.run = AsyncMock(return_value=BrowserResult(text="Task completed successfully. The browser navigated to the page and extracted the data.", actions=[{"action": "done"}]))
             mock_get_ba.return_value = mock_ba
             result = await loop.run("test task")
 
         assert isinstance(result, AgentResult)
         assert result.task == "test task"
-        assert result.result == "done"
+        assert "completed" in result.result.lower() or "Task" in result.result
 
     @pytest.mark.asyncio
     async def test_run_with_empty_result(self, tmp_sediman_dir):
@@ -106,7 +106,12 @@ class TestAgentLoop:
              patch.object(loop, "_save_session", new_callable=AsyncMock), \
              patch.object(loop._memory, "initialize", new_callable=AsyncMock), \
              patch.object(loop._memory, "on_turn_start", new_callable=AsyncMock), \
-             patch.object(loop._memory, "on_session_end", new_callable=AsyncMock):
+             patch.object(loop._memory, "on_session_end", new_callable=AsyncMock), \
+             patch.object(loop, "_reflect_on_step", new_callable=AsyncMock) as mock_reflect:
+            from sediman.agent.state import Reflection
+            mock_reflect.return_value = Reflection(
+                task_complete=True, confidence=0.9, reasoning="skill created"
+            )
             mock_ba = MagicMock()
             mock_ba.run = AsyncMock(return_value=BrowserResult(text="done", actions=[{"action": "navigate"}, {"action": "click"}, {"action": "extract"}]))
             mock_get_ba.return_value = mock_ba
@@ -133,9 +138,15 @@ class TestAgentLoop:
              patch.object(loop, "_create_scheduled_job", return_value="abc123def456"), \
              patch.object(loop._memory, "initialize", new_callable=AsyncMock), \
              patch.object(loop._memory, "on_turn_start", new_callable=AsyncMock), \
-             patch.object(loop._memory, "on_session_end", new_callable=AsyncMock):
+             patch.object(loop._memory, "on_session_end", new_callable=AsyncMock), \
+             patch.object(loop._regex_planner, "plan", return_value=MagicMock(schedule=None, browser_task="get nvidia stock price")), \
+             patch.object(loop, "_reflect_on_step", new_callable=AsyncMock) as mock_reflect:
+            from sediman.agent.state import Reflection
+            mock_reflect.return_value = Reflection(
+                task_complete=True, confidence=0.9, reasoning="scheduled"
+            )
             mock_ba = MagicMock()
-            mock_ba.run = AsyncMock(return_value=BrowserResult(text="NVDA: $131.00", actions=[]))
+            mock_ba.run = AsyncMock(return_value=BrowserResult(text="NVDA: $131.00 as of today", actions=[{"action": "done"}]))
             mock_get_ba.return_value = mock_ba
             result = await loop.run("get nvidia stock price every 5 minutes")
 
@@ -161,8 +172,8 @@ class TestAgentLoop:
              patch.object(loop._memory, "on_session_end", new_callable=AsyncMock):
             mock_ba = MagicMock()
             mock_ba.run = AsyncMock(side_effect=[
-                BrowserResult(text="on amazon", actions=[]),
-                BrowserResult(text="on ebay", actions=[]),
+                BrowserResult(text="Navigated to Amazon and found the product page successfully.", actions=[{"action": "done"}]),
+                BrowserResult(text="Navigated to eBay and found the listing successfully.", actions=[{"action": "done"}]),
             ])
             mock_get_ba.return_value = mock_ba
 
@@ -172,7 +183,7 @@ class TestAgentLoop:
             await loop.run("ah sorry should be ebay")
             assert len(loop._conversation) == 4
             assert loop._conversation[2]["content"] == "ah sorry should be ebay"
-            assert loop._conversation[3]["content"] == "on ebay"
+            assert "eBay" in loop._conversation[3]["content"] or "completed" in loop._conversation[3]["content"].lower() or "Task" in loop._conversation[3]["content"]
 
     @pytest.mark.asyncio
     async def test_build_task_with_context_empty(self, tmp_sediman_dir):

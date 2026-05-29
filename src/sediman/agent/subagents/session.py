@@ -6,8 +6,9 @@ from collections.abc import Callable
 import structlog
 
 from sediman.agent.browser_agent import BrowserSubagent, BrowserResult
+from sediman.agent.guardrails import SharedScratchpad
 from sediman.agent.state import AgentPhase, AgentState
-from sediman.agent.subagents.permissions import PermissionRules
+from sediman.agent.subagents.permissions import PermissionRules, check_permission
 from sediman.agent.subagents.result import Artifact, SubagentResult
 from sediman.agent.subagents.template import AgentTemplate
 from sediman.agent.tool_dispatch import ToolRegistry
@@ -34,6 +35,7 @@ class SubagentSession:
         browser_session: BrowserSession | None = None,
         on_step: Callable[[str, str], None] | None = None,
         flash_mode: bool = True,
+        scratchpad: SharedScratchpad | None = None,
     ):
         self.template = template
         self.task = task
@@ -43,6 +45,7 @@ class SubagentSession:
         self.browser = browser_session
         self.on_step = on_step
         self.flash_mode = flash_mode
+        self._scratchpad = scratchpad or SharedScratchpad()
         self._conversation: list[dict[str, str]] = []
         self._iterations = 0
 
@@ -98,9 +101,8 @@ class SubagentSession:
                         ],
                     })
                     for tc in response.tool_calls:
-                        # Permission check
                         perms = PermissionRules(self.template.permissions)
-                        if perms.is_denied(tc.name):
+                        if not await check_permission(tc.name, tc.arguments, perms):
                             result_text = f"Tool '{tc.name}' is not allowed for this subagent."
                             state.errors.append(result_text)
                         else:
@@ -164,6 +166,13 @@ class SubagentSession:
                 "<parent_observations>\n"
                 + "\n".join(f"- {o}" for o in parent_obs[-3:])
                 + "\n</parent_observations>"
+            )
+
+        shared_data = self._scratchpad.read_all()
+        if shared_data:
+            import json
+            sections.append(
+                "<shared_context>\n" + json.dumps(shared_data, default=str, indent=2)[:1000] + "\n</shared_context>"
             )
 
         return "\n\n".join(sections)

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
@@ -27,10 +28,12 @@ class Strategy(str, Enum):
 class Observation:
     source: str
     content: str
-    success: bool = True
+    success: bool = False
     url: str | None = None
     screenshot: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
+    data_extracted: dict[str, Any] = field(default_factory=dict)
+    verification_passed: bool | None = None
 
 
 @dataclass
@@ -42,6 +45,7 @@ class Reflection:
     next_action: str | None = None
     should_retry: bool = False
     should_replan: bool = False
+    retry_context: str | None = None
 
 
 @dataclass
@@ -53,10 +57,19 @@ class PlanStep:
     result: str | None = None
     observations: list[Observation] = field(default_factory=list)
     retries: int = 0
-    max_retries: int = 2
+    max_retries: int = 3
     original_strategy: Strategy | None = None
     fallback_attempted: bool = False
     subagent_type: str | None = None
+    failure_history: list[str] = field(default_factory=list)
+    plan_signature: str | None = None
+
+    def add_failure(self, reason: str) -> None:
+        self.failure_history.append(reason)
+
+    @property
+    def last_failure(self) -> str | None:
+        return self.failure_history[-1] if self.failure_history else None
 
 
 @dataclass
@@ -76,6 +89,9 @@ class AgentState:
     schedule_cron: str | None = None
     delegate_results: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
+    plan_signatures: list[str] = field(default_factory=list)
+    replan_count: int = 0
+    max_replans: int = 3
 
     @property
     def current_step(self) -> PlanStep | None:
@@ -109,10 +125,18 @@ class AgentState:
             return False
         return bool(self.pending_steps) or self.current_step is not None
 
+    def has_seen_plan(self, description: str, strategy: str) -> bool:
+        sig = hashlib.md5(f"{strategy}:{description}".encode()).hexdigest()[:12]
+        if sig in self.plan_signatures:
+            return True
+        self.plan_signatures.append(sig)
+        return False
+
     def to_summary(self) -> str:
         parts = [f"Task: {self.task}"]
         parts.append(f"Phase: {self.phase.value}")
         parts.append(f"Iteration: {self.iteration}/{self.max_iterations}")
+        parts.append(f"Replans: {self.replan_count}/{self.max_replans}")
         if self.plan_steps:
             parts.append("Steps:")
             for step in self.plan_steps:
@@ -120,6 +144,8 @@ class AgentState:
                 parts.append(f"  {status_icon} [{step.strategy.value}] {step.description[:80]}")
                 if step.result:
                     parts.append(f"    Result: {step.result[:100]}")
+                if step.failure_history:
+                    parts.append(f"    Failures: {'; '.join(step.failure_history[-2:])}")
         if self.errors:
             parts.append(f"Errors: {'; '.join(self.errors[-3:])}")
         if self.observations:

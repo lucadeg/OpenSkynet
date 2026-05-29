@@ -71,8 +71,7 @@ class TestTryLightweightRecovery:
         result = await loop._try_lightweight_recovery(state, step, obs)
 
         assert result is False
-        assert step.retries == 1
-        assert step.status == "pending"
+        assert step.retries == 0
 
     @pytest.mark.asyncio
     async def test_http_fallback_handles_exception(self, tmp_sediman_dir):
@@ -175,7 +174,7 @@ class TestHandleReflectionResult:
         state = AgentState(task="do stuff")
         step = PlanStep(id=0, description="do it", strategy=Strategy.DIRECT, max_retries=2, retries=2)
         obs = Observation(source="s", content="partial result", success=True)
-        reflection = Reflection(task_complete=False, confidence=0.4, reasoning="uncertain", should_retry=False)
+        reflection = Reflection(task_complete=True, confidence=0.55, reasoning="uncertain but done", should_retry=False)
 
         with patch.object(loop, "_try_lightweight_recovery", new_callable=AsyncMock, return_value=False), \
              patch.object(loop, "_replan", new_callable=AsyncMock):

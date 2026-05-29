@@ -192,7 +192,13 @@ class BrowserController:
                 return f"Element [ref_id={ref_id}] not found on page. Try browser_snapshot() to see available elements."
             tag = await element.evaluate("el => el.tagName.toLowerCase()")
             text = await element.evaluate("el => el.textContent?.slice(0,50) || ''")
+            url_before = self._page.url
             await element.click()
+            try:
+                if tag in ("a", "button") and text.lower().strip() not in ("cancel", "close", "dismiss"):
+                    await self._page.wait_for_load_state("domcontentloaded", timeout=3000)
+            except Exception:
+                pass
             self._emit_step("click", f"[ref_id={ref_id}] {tag} '{text}'")
             return f"Clicked element [ref_id={ref_id}] ({tag}: '{text}')"
         except Exception as e:
@@ -215,6 +221,75 @@ class BrowserController:
         except Exception as e:
             logger.warning("type_failed", ref_id=ref_id, error=str(e))
             return f"Type failed for [ref_id={ref_id}]: {e}"
+
+    async def hover(self, ref_id: int) -> str:
+        if not self._page:
+            return "Browser not started."
+        try:
+            element = await self._resolve_element(ref_id)
+            if not element:
+                return f"Element [ref_id={ref_id}] not found on page. Try browser_snapshot() to see available elements."
+            await element.scroll_into_view_if_needed()
+            await element.hover()
+            self._emit_step("hover", f"[ref_id={ref_id}]")
+            return f"Hovered over element [ref_id={ref_id}]"
+        except Exception as e:
+            logger.warning("hover_failed", ref_id=ref_id, error=str(e))
+            return f"Hover failed for [ref_id={ref_id}]: {e}"
+
+    async def select_option(self, ref_id: int, value: str) -> str:
+        if not self._page:
+            return "Browser not started."
+        try:
+            element = await self._resolve_element(ref_id)
+            if not element:
+                return f"Element [ref_id={ref_id}] not found on page. Try browser_snapshot() to see available elements."
+            tag = await element.evaluate("el => el.tagName.toLowerCase()")
+            if tag != "select":
+                return f"Element [ref_id={ref_id}] is not a <select> (got <{tag}>). Use browser_click instead."
+            await element.select_option(value=value)
+            self._emit_step("select_option", f"[ref_id={ref_id}] value='{value}'")
+            return f"Selected '{value}' in [ref_id={ref_id}]"
+        except Exception as e:
+            logger.warning("select_option_failed", ref_id=ref_id, error=str(e))
+            return f"Select option failed for [ref_id={ref_id}]: {e}"
+
+    async def switch_tab(self, index: int = -1) -> str:
+        if not self._page:
+            return "Browser not started."
+        try:
+            context = self._page.context
+            pages = context.pages
+            if not pages:
+                return "No tabs available."
+            if index < 0:
+                index = len(pages) + index
+            if index < 0 or index >= len(pages):
+                return f"Tab index {index} out of range (0-{len(pages)-1})."
+            target_page = pages[index]
+            await target_page.bring_to_front()
+            self._own_page = target_page
+            self._emit_step("switch_tab", f"tab {index}: {target_page.url}")
+            return f"Switched to tab {index}: {target_page.url}"
+        except Exception as e:
+            logger.warning("switch_tab_failed", error=str(e))
+            return f"Switch tab failed: {e}"
+
+    async def list_tabs(self) -> str:
+        if not self._page:
+            return "Browser not started."
+        try:
+            context = self._page.context
+            pages = context.pages
+            if not pages:
+                return "No tabs open."
+            lines = []
+            for i, p in enumerate(pages):
+                marker = " (active)" if p == self._page else ""
+                lines.append(f"  [{i}] {p.url}{marker}")
+            return f"Open tabs ({len(pages)}):\n" + "\n".join(lines)
+        except Exception as e:
+            return f"List tabs failed: {e}"
 
     async def _resolve_element(self, ref_id: int):
         """Cascading element resolution: ref_id -> aria -> text -> role."""
@@ -557,7 +632,8 @@ _DISMISS_OVERLAYS_JS = """
                 if (style.position === 'fixed' || style.position === 'absolute') {
                     const rect = el.getBoundingClientRect();
                     if (rect.width > window.innerWidth * 0.3 || rect.height > window.innerHeight * 0.3) {
-                        el.remove();
+                        el.style.display = 'none';
+                        el.style.pointerEvents = 'none';
                         count++;
                     }
                 }

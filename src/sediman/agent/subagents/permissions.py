@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import Any, Awaitable, Callable
 
 import structlog
 
@@ -10,6 +11,31 @@ logger = structlog.get_logger()
 
 _VALID_ACTIONS = {"allow", "ask", "deny"}
 _DEFAULT_RULE = "allow"
+
+_APPROVAL_CALLBACK: Callable[[str, dict[str, Any]], Awaitable[bool]] | None = None
+
+
+def set_approval_callback(cb: Callable[[str, dict[str, Any]], Awaitable[bool]] | None) -> None:
+    global _APPROVAL_CALLBACK
+    _APPROVAL_CALLBACK = cb
+
+
+async def check_permission(tool_name: str, arguments: dict[str, Any], rules: PermissionRules) -> bool:
+    action = rules.action_for(tool_name)
+    if action == "allow":
+        return True
+    if action == "deny":
+        return False
+    if action == "ask":
+        if _APPROVAL_CALLBACK is None:
+            logger.info("permission_ask_auto_approved", tool=tool_name)
+            return True
+        try:
+            import asyncio
+            return await _APPROVAL_CALLBACK(tool_name, arguments)
+        except Exception:
+            return False
+    return True
 
 
 @dataclass

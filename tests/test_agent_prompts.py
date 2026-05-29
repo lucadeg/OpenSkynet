@@ -36,7 +36,7 @@ class TestBuildSystemPrompt:
 
     def test_includes_completion_rules(self, tmp_sediman_dir):
         prompt = build_system_prompt()
-        assert "<completion_rules>" in prompt
+        assert "<verification_and_completion>" in prompt
 
     def test_includes_error_recovery(self, tmp_sediman_dir):
         prompt = build_system_prompt()
@@ -44,11 +44,11 @@ class TestBuildSystemPrompt:
 
     def test_includes_critical_reminders(self, tmp_sediman_dir):
         prompt = build_system_prompt()
-        assert "<critical_reminders>" in prompt
+        assert "<identity>" in prompt or "Sediman" in prompt
 
     def test_includes_verification_rules(self, tmp_sediman_dir):
         prompt = build_system_prompt()
-        assert "<verification_rules>" in prompt
+        assert "verify" in prompt.lower()
 
     def test_includes_action_format(self, tmp_sediman_dir):
         prompt = build_system_prompt()

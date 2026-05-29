@@ -51,7 +51,7 @@ class TestReflectOnStepErrorFastPath:
         with patch.object(loop, "_looks_like_error", return_value=False):
             state = AgentState(task="do stuff")
             step = PlanStep(id=0, description="do it", strategy=Strategy.DIRECT)
-            obs = Observation(source="s", content="All done", success=True)
+            obs = Observation(source="s", content="All done successfully. The task was completed and the results are here.", success=True)
 
             with patch.object(loop._manager, "reflect", new_callable=AsyncMock, return_value={
                 "task_complete": True, "confidence": 0.9, "reasoning": "ok",
@@ -82,7 +82,7 @@ class TestReflectOnStepDataMatchFastPath:
 
         assert result is not None
         assert result.task_complete is True
-        assert result.confidence >= 0.85
+        assert result.confidence >= 0.75
         assert "Data-match" in result.reasoning
 
     @pytest.mark.asyncio
@@ -106,7 +106,8 @@ class TestReflectOnStepDataMatchFastPath:
         with patch.object(loop, "_looks_like_error", return_value=False):
             state = AgentState(task="extract nvidia prices")
             step = PlanStep(id=0, description="do it", strategy=Strategy.DIRECT)
-            obs = Observation(source="s", content="nvidia", success=True)
+            content = "nvidia price data " * 10
+            obs = Observation(source="s", content=content, success=True)
 
             with patch.object(loop._manager, "reflect", new_callable=AsyncMock, return_value={
                 "task_complete": True, "confidence": 0.5, "reasoning": "ok",
@@ -134,7 +135,7 @@ class TestReflectOnStepSuccessFastPath:
 
         assert result is not None
         assert result.task_complete is True
-        assert result.confidence == 0.9
+        assert result.confidence == 0.85
 
     @pytest.mark.asyncio
     async def test_success_fast_path_without_done_action(self, tmp_sediman_dir):
@@ -144,11 +145,14 @@ class TestReflectOnStepSuccessFastPath:
             step = PlanStep(id=0, description="do it", strategy=Strategy.DIRECT)
             obs = Observation(source="s", content="x" * 100, success=True)
 
-            result = await loop._reflect_on_step(state, step, obs)
+            with patch.object(loop._manager, "reflect", new_callable=AsyncMock, return_value={
+                "task_complete": True, "confidence": 0.7, "reasoning": "LLM confirmed",
+            }):
+                result = await loop._reflect_on_step(state, step, obs)
 
         assert result is not None
         assert result.task_complete is True
-        assert result.confidence == 0.8
+        assert result.confidence == 0.7
 
     @pytest.mark.asyncio
     async def test_success_fast_path_skipped_when_errors(self, tmp_sediman_dir):

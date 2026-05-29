@@ -10,6 +10,7 @@ from typing import Any, Awaitable, Callable
 import structlog
 
 from sediman.agent.interrupt import InterruptSignal
+from sediman.agent.guardrails import assess_risk, GLOBAL_APPROVAL, AuditLog
 from sediman.llm.provider import LLMProvider, LLMResponse, ToolDefinition
 
 logger = structlog.get_logger()
@@ -183,13 +184,20 @@ class ToolRegistry:
         if not handler:
             return ToolResult(success=False, output=f"Unknown tool: {tool_name}")
         try:
-            # ── Pre-edit checkpoint ─────────────────────────────
+            risk = assess_risk(tool_name, arguments)
+            if risk == "high":
+                AuditLog.get().record("tool", "risk_assessment", f"high_risk: {tool_name}", args=str(arguments)[:200])
+                approved = await GLOBAL_APPROVAL.request(tool_name, arguments)
+                if not approved:
+                    AuditLog.get().record("tool", "blocked", f"user_denied: {tool_name}")
+                    return ToolResult(success=False, output=f"Tool '{tool_name}' was not approved for this action.")
+
             if self._checkpoint_manager is not None:
                 cwd = arguments.get("cwd") if tool_name == "terminal" else None
                 await self._checkpoint_manager.maybe_checkpoint(tool_name, arguments, cwd=cwd)
 
             result = await handler(**arguments)
-            logger.info("tool_dispatched", tool=tool_name, success=result.success)
+            logger.info("tool_dispatched", tool=tool_name, success=result.success, risk=risk)
             return result
         except Exception as e:
             logger.warning("tool_dispatch_failed", tool=tool_name, error=str(e))
