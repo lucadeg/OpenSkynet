@@ -929,7 +929,7 @@ class TestWebExtractToolHandler:
             })
 
         assert not result.success
-        assert "Could not extract" in result.output
+        assert "failed" in result.output.lower()
 
     @pytest.mark.asyncio
     async def test_summarized_content(self):

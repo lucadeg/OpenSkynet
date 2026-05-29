@@ -216,8 +216,8 @@ async def execute_cron_job(job: dict[str, Any]) -> str:
 
     try:
         return await _execute_cron_job_inner(job)
-    except Exception:
-        return None
+    except Exception as exc:
+        return f"error: {exc}"
     finally:
         try:
             structlog.reset_defaults()

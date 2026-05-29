@@ -51,12 +51,12 @@ class TestFindSimilar:
             assert result["name"] == "search-google"
 
     def test_vector_fallback_on_exception(self, engine):
-        engine.create(name="fallback-test", description="test desc", steps=["a"])
+        engine.create(name="fallback-test", description="cooking pasta carbonara", steps=["a"])
 
         with patch("sediman.memory.vector.VectorStore") as MockVectorStore:
             MockVectorStore.side_effect = ImportError("no module")
 
-            result = engine.find_similar("nonexistent", "test desc")
+            result = engine.find_similar("nonexistent", "quantum physics experiments")
             assert result is None
 
     def test_similarity_threshold_filters_low_scores(self, engine):

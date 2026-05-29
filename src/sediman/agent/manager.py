@@ -473,7 +473,14 @@ class ManagerAgent:
         task_lower = task.lower()
         if any(kw in task_lower for kw in ("chat", "converse", "discuss")):
             return False
-        if any(kw in task_lower for kw in ("schedule", "cron", "remind")):
+        if any(kw in task_lower for kw in ("schedule", "cron", "remind", "recurring", "interval", "periodically")):
+            return False
+        # Vague/ambiguous tasks need LLM interpretation
+        if any(kw in task_lower for kw in ("sorry", "actually", "wait", "never mind", "no i meant", "i meant")):
+            return False
+        # Must contain a clear action verb for fast-path
+        action_verbs = ("go to", "open", "visit", "browse", "navigate", "search", "find", "check", "get", "buy", "book", "fill", "download", "upload", "log in", "sign in", "click", "scrape", "monitor", "track", "watch", "extract", "take screenshot")
+        if not any(kw in task_lower for kw in action_verbs):
             return False
         return True
 
