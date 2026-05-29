@@ -22,7 +22,7 @@ def compressor():
 class TestUtilityFunctions:
     def test_estimate_tokens(self):
         assert _estimate_tokens("hello world") > 0
-        assert _estimate_tokens("") == 1
+        assert _estimate_tokens("") == 0
 
     def test_estimate_tokens_proportional(self):
         short = _estimate_tokens("a" * 100)
@@ -61,9 +61,19 @@ class TestContextCompressorShouldCompress:
         assert compressor.should_compress([]) is False
 
     def test_false_with_poor_history(self, compressor):
-        compressor._compression_history = [5, 3]
+        compressor._compression_history = [3, 2, 1]
         messages = [{"role": "user", "content": "hi"}] * (COMPRESS_THRESHOLD * 2 + 1)
         assert compressor.should_compress(messages) is False
+
+    def test_true_with_only_two_poor_history(self, compressor):
+        compressor._compression_history = [3, 2]
+        messages = [{"role": "user", "content": "hi"}] * (COMPRESS_THRESHOLD * 2 + 1)
+        assert compressor.should_compress(messages) is True
+
+    def test_force_compress_at_6x(self, compressor):
+        compressor._compression_history = [2, 2, 2]
+        messages = [{"role": "user", "content": "hi"}] * (COMPRESS_THRESHOLD * 6 + 1)
+        assert compressor.should_compress(messages) is True
 
 
 class TestContextCompressorCompress:

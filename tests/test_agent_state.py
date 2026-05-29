@@ -46,10 +46,12 @@ class TestStrategy:
 class TestObservation:
     def test_defaults(self):
         obs = Observation(source="browser", content="page loaded")
-        assert obs.success is True
+        assert obs.success is False
         assert obs.url is None
         assert obs.screenshot is None
         assert obs.metadata == {}
+        assert obs.data_extracted == {}
+        assert obs.verification_passed is None
 
     def test_with_all_fields(self):
         obs = Observation(
@@ -111,7 +113,7 @@ class TestPlanStep:
         assert step.result is None
         assert step.observations == []
         assert step.retries == 0
-        assert step.max_retries == 2
+        assert step.max_retries == 3
         assert step.original_strategy is None
         assert step.fallback_attempted is False
 

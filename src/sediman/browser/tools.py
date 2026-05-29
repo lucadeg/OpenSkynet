@@ -4,11 +4,19 @@ from typing import Any
 
 import structlog
 
+import re
+
 from sediman.agent.tool_dispatch import ToolRegistry, ToolResult
 from sediman.browser.controller import BrowserController, format_snapshot
 from sediman.llm.provider import ToolDefinition
 
 logger = structlog.get_logger()
+
+_FAIL_RE = re.compile(r"\b(failed|not found|error|timed out)\b", re.IGNORECASE)
+
+
+def _is_success(result: str) -> bool:
+    return not _FAIL_RE.search(result)
 
 _DEFAULT_CONTROLLER: BrowserController | None = None
 
@@ -29,7 +37,7 @@ async def _handle_browser_navigate(url: str, **kwargs: Any) -> ToolResult:
     if not ctrl.is_started:
         await ctrl.start()
     result = await ctrl.navigate(url)
-    return ToolResult(success="Failed" not in result, output=result)
+    return ToolResult(success=_is_success(result), output=result)
 
 
 async def _handle_browser_click(ref_id: int, **kwargs: Any) -> ToolResult:
@@ -39,7 +47,7 @@ async def _handle_browser_click(ref_id: int, **kwargs: Any) -> ToolResult:
     if not ctrl.is_started:
         return ToolResult(success=False, output="Browser not started. Call browser_navigate first.")
     result = await ctrl.click(ref_id)
-    return ToolResult(success="not found" not in result.lower(), output=result)
+    return ToolResult(success=_is_success(result), output=result)
 
 
 async def _handle_browser_type(ref_id: int, text: str, submit: bool = False, **kwargs: Any) -> ToolResult:
@@ -49,7 +57,7 @@ async def _handle_browser_type(ref_id: int, text: str, submit: bool = False, **k
     if not ctrl.is_started:
         return ToolResult(success=False, output="Browser not started. Call browser_navigate first.")
     result = await ctrl.type_text(ref_id, text, submit=submit)
-    return ToolResult(success="not found" not in result.lower(), output=result)
+    return ToolResult(success=_is_success(result), output=result)
 
 
 async def _handle_browser_scroll(direction: str = "down", amount: int = 300, **kwargs: Any) -> ToolResult:
@@ -59,7 +67,7 @@ async def _handle_browser_scroll(direction: str = "down", amount: int = 300, **k
     if not ctrl.is_started:
         return ToolResult(success=False, output="Browser not started.")
     result = await ctrl.scroll(direction, amount)
-    return ToolResult(success="Failed" not in result, output=result)
+    return ToolResult(success=_is_success(result), output=result)
 
 
 async def _handle_browser_press_key(key: str, **kwargs: Any) -> ToolResult:
@@ -69,7 +77,7 @@ async def _handle_browser_press_key(key: str, **kwargs: Any) -> ToolResult:
     if not ctrl.is_started:
         return ToolResult(success=False, output="Browser not started.")
     result = await ctrl.press_key(key)
-    return ToolResult(success="failed" not in result.lower(), output=result)
+    return ToolResult(success=_is_success(result), output=result)
 
 
 async def _handle_browser_go_back(**kwargs: Any) -> ToolResult:
@@ -79,7 +87,7 @@ async def _handle_browser_go_back(**kwargs: Any) -> ToolResult:
     if not ctrl.is_started:
         return ToolResult(success=False, output="Browser not started.")
     result = await ctrl.go_back()
-    return ToolResult(success="failed" not in result.lower(), output=result)
+    return ToolResult(success=_is_success(result), output=result)
 
 
 async def _handle_browser_go_forward(**kwargs: Any) -> ToolResult:
@@ -89,7 +97,7 @@ async def _handle_browser_go_forward(**kwargs: Any) -> ToolResult:
     if not ctrl.is_started:
         return ToolResult(success=False, output="Browser not started.")
     result = await ctrl.go_forward()
-    return ToolResult(success="failed" not in result.lower(), output=result)
+    return ToolResult(success=_is_success(result), output=result)
 
 
 async def _handle_browser_screenshot(**kwargs: Any) -> ToolResult:
@@ -157,7 +165,7 @@ async def _handle_browser_refresh(**kwargs: Any) -> ToolResult:
     if not ctrl.is_started:
         return ToolResult(success=False, output="Browser not started.")
     result = await ctrl.refresh()
-    return ToolResult(success="failed" not in result.lower(), output=result)
+    return ToolResult(success=_is_success(result), output=result)
 
 
 async def _handle_browser_wait_for_selector(selector: str, timeout: int = 5000, **kwargs: Any) -> ToolResult:
@@ -167,7 +175,47 @@ async def _handle_browser_wait_for_selector(selector: str, timeout: int = 5000, 
     if not ctrl.is_started:
         return ToolResult(success=False, output="Browser not started.")
     result = await ctrl.wait_for_selector(selector, timeout=timeout)
-    return ToolResult(success="timed out" not in result.lower(), output=result)
+    return ToolResult(success=_is_success(result), output=result)
+
+
+async def _handle_browser_hover(ref_id: int, **kwargs: Any) -> ToolResult:
+    ctrl = get_default_browser_controller()
+    if not ctrl:
+        return ToolResult(success=False, output="Browser controller not initialized.")
+    if not ctrl.is_started:
+        return ToolResult(success=False, output="Browser not started. Call browser_navigate first.")
+    result = await ctrl.hover(ref_id)
+    return ToolResult(success="not found" not in result.lower() and "failed" not in result.lower(), output=result)
+
+
+async def _handle_browser_select_option(ref_id: int, value: str, **kwargs: Any) -> ToolResult:
+    ctrl = get_default_browser_controller()
+    if not ctrl:
+        return ToolResult(success=False, output="Browser controller not initialized.")
+    if not ctrl.is_started:
+        return ToolResult(success=False, output="Browser not started. Call browser_navigate first.")
+    result = await ctrl.select_option(ref_id, value)
+    return ToolResult(success="not found" not in result.lower() and "failed" not in result.lower(), output=result)
+
+
+async def _handle_browser_switch_tab(index: int = -1, **kwargs: Any) -> ToolResult:
+    ctrl = get_default_browser_controller()
+    if not ctrl:
+        return ToolResult(success=False, output="Browser controller not initialized.")
+    if not ctrl.is_started:
+        return ToolResult(success=False, output="Browser not started.")
+    result = await ctrl.switch_tab(index)
+    return ToolResult(success="failed" not in result.lower(), output=result)
+
+
+async def _handle_browser_list_tabs(**kwargs: Any) -> ToolResult:
+    ctrl = get_default_browser_controller()
+    if not ctrl:
+        return ToolResult(success=False, output="Browser controller not initialized.")
+    if not ctrl.is_started:
+        return ToolResult(success=False, output="Browser not started.")
+    result = await ctrl.list_tabs()
+    return ToolResult(success=True, output=result)
 
 
 def register_browser_tools(registry: ToolRegistry) -> None:
@@ -334,4 +382,58 @@ def register_browser_tools(registry: ToolRegistry) -> None:
         _handle_browser_wait_for_selector,
     )
 
-    logger.info("browser_tools_registered", count=14)
+    registry.register(
+        ToolDefinition(
+            name="browser_hover",
+            description="Hover over an element by its ref_id. Use for dropdown menus, tooltips, and hover-reveal UI elements.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "ref_id": {"type": "integer", "description": "The ref_id of the element to hover over"},
+                },
+                "required": ["ref_id"],
+            },
+        ),
+        _handle_browser_hover,
+    )
+
+    registry.register(
+        ToolDefinition(
+            name="browser_select_option",
+            description="Select an option in a <select> dropdown element by its ref_id and option value.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "ref_id": {"type": "integer", "description": "The ref_id of the <select> element"},
+                    "value": {"type": "string", "description": "The value of the option to select"},
+                },
+                "required": ["ref_id", "value"],
+            },
+        ),
+        _handle_browser_select_option,
+    )
+
+    registry.register(
+        ToolDefinition(
+            name="browser_switch_tab",
+            description="Switch to a different browser tab by index. Use -1 for the last tab.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "index": {"type": "integer", "description": "Tab index (0-based, -1 for last)", "default": -1},
+                },
+            },
+        ),
+        _handle_browser_switch_tab,
+    )
+
+    registry.register(
+        ToolDefinition(
+            name="browser_list_tabs",
+            description="List all open browser tabs with their URLs.",
+            parameters={"type": "object", "properties": {}},
+        ),
+        _handle_browser_list_tabs,
+    )
+
+    logger.info("browser_tools_registered", count=18)

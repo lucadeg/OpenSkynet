@@ -29,6 +29,15 @@ from sediman.agent.subagents.factory import SubagentFactory
 from sediman.agent.subagents.registry import SubagentRegistry
 from sediman.agent.tool_dispatch import ToolRegistry
 from sediman.agent.tools import create_agent_tool_registry
+from sediman.agent.guardrails import (
+    AuditLog,
+    Budget,
+    TraceCollector,
+    Trace,
+    assess_risk,
+    GLOBAL_APPROVAL,
+    SharedScratchpad,
+)
 from sediman.browser.session import BrowserSession
 from sediman.llm.provider import LLMProvider
 from sediman.memory.manager import MemoryManager
@@ -126,6 +135,10 @@ class AgentLoop:
         saved = _load_agent_state()
         self._iters_since_skill = saved.get("iters_since_skill", 0)
         self._skill_review_threshold = saved.get("skill_review_threshold", 10)
+        self._budget = Budget()
+        self._trace_collector = TraceCollector.get()
+        self._audit = AuditLog.get()
+        self._scratchpad = SharedScratchpad()
 
     def _get_tool_registry(self) -> ToolRegistry:
         if self._tool_registry is None:
@@ -195,12 +208,17 @@ class AgentLoop:
     async def run(self, task: str) -> AgentResult:
         session_id = str(uuid.uuid4())[:8]
         state = AgentState(task=task, max_iterations=self._max_iterations)
+        self._budget = Budget()
+        self._budget.start()
+        trace = self._trace_collector.start_trace("agent.run", task=task[:100])
+        root_span = trace.spans[0] if trace.spans else None
 
         if not self._memory_initialized:
             await self._memory.initialize()
             self._memory_initialized = True
 
         logger.info("agent_task_start", session_id=session_id, task=task)
+        self._audit.record("agent", "task_start", task[:100], session_id=session_id)
 
         if self._compressor.should_compress(self._conversation):
             self._conversation = await self._compressor.compress(self._conversation)
@@ -320,6 +338,12 @@ class AgentLoop:
             state.current_step_index = len(delegate_steps)
 
         while state.should_continue() and state.iteration < state.max_iterations:
+            exhausted, reason = self._budget.is_exhausted()
+            if exhausted:
+                self._audit.record("agent", "budget_exhausted", reason)
+                logger.warning("budget_exhausted", reason=reason)
+                break
+
             state.iteration += 1
 
             step = state.current_step
@@ -339,11 +363,18 @@ class AgentLoop:
             )
 
             if step.strategy == Strategy.DELEGATE:
+                exec_span = trace.new_span("execute.delegate", root_span, step=step.id)
                 await self._execute_delegate_step(state, step)
+                trace.finish_span(exec_span, status="ok" if step.result and not self._looks_like_error(step.result) else "error")
             elif step.strategy == Strategy.USE_SKILL:
+                exec_span = trace.new_span("execute.skill", root_span, step=step.id)
                 await self._execute_skill_step(state, step, plan)
+                trace.finish_span(exec_span, status="ok" if step.result and not self._looks_like_error(step.result) else "error")
             else:
+                exec_span = trace.new_span("execute.direct", root_span, step=step.id)
                 await self._execute_direct_step(state, step, plan)
+                trace.finish_span(exec_span, status="ok" if step.result and not self._looks_like_error(step.result) else "error")
+            self._budget.add_action()
 
             # ── Phase 3: Observe ──────────────────────────────
             state.phase = AgentPhase.OBSERVING
@@ -646,13 +677,28 @@ class AgentLoop:
             state.actions_taken.extend(browser_result.actions)
 
     def _build_observation(self, step: PlanStep, state: AgentState) -> Observation:
-        if step.result:
-            success = not self._looks_like_error(step.result)
-        else:
+        content = step.result or ""
+        if not content:
+            return Observation(
+                source=f"step_{step.id}",
+                content="No result produced",
+                success=False,
+                metadata={"strategy": step.strategy.value, "retries": step.retries},
+            )
+
+        has_error = self._looks_like_error(content)
+        is_very_short = len(content.strip()) < 20
+        has_done_action = any(
+            a.get("action") == "done" or a.get("type") == "done"
+            for a in state.actions_taken[-5:]
+        )
+        success = not has_error and not is_very_short
+        if success and not has_done_action and len(content) < 50:
             success = False
+
         return Observation(
             source=f"step_{step.id}",
-            content=step.result or "No result",
+            content=content,
             success=success,
             metadata={"strategy": step.strategy.value, "retries": step.retries},
         )
@@ -660,6 +706,8 @@ class AgentLoop:
     async def _reflect_on_step(
         self, state: AgentState, step: PlanStep, observation: Observation
     ) -> Reflection | None:
+        from sediman.agent.guardrails import AuditLog
+
         if self._skip_reflection_on_success:
             has_done_action = any(
                 a.get("action") == "done" or a.get("type") == "done"
@@ -668,40 +716,25 @@ class AgentLoop:
             has_error_indicators = self._looks_like_error(observation.content or "")
             if (
                 observation.success
+                and has_done_action
                 and len(observation.content or "") > 60
                 and not state.errors
                 and not has_error_indicators
                 and step.retries == 0
             ):
-                confidence = 0.9 if has_done_action else 0.8
-                logger.debug("reflection_skipped_fast_path", step=step.id, has_done=has_done_action)
-                return Reflection(
-                    task_complete=True,
-                    confidence=confidence,
-                    reasoning="Fast-path: result verified complete, no errors, no retries.",
-                    should_retry=False,
-                    should_replan=False,
-                )
-            if (
-                observation.success
-                and len(observation.content or "") > 80
-                and not state.errors
-                and not has_done_action
-                and step.retries == 0
-            ):
-                logger.debug("reflection_skipped_fast_path", step=step.id)
+                AuditLog.get().record("reflection", "fast_path_success", "done_action_present", step=step.id)
                 return Reflection(
                     task_complete=True,
                     confidence=0.85,
-                    reasoning="Fast-path: result looks complete and no errors occurred.",
+                    reasoning="Fast-path: browser reported done, no errors, no retries.",
                     should_retry=False,
                     should_replan=False,
                 )
 
-        # Error fast-path: if result is clearly an error, skip LLM reflection
         content = observation.content or ""
         if not observation.success and self._looks_like_error(content):
-            logger.debug("reflection_skipped_error_path", step=step.id)
+            from sediman.agent.guardrails import AuditLog
+            AuditLog.get().record("reflection", "fast_path_error", "error_indicators_detected", step=step.id)
             should_retry = step.retries < step.max_retries
             return Reflection(
                 task_complete=False,
@@ -709,33 +742,57 @@ class AgentLoop:
                 reasoning=f"Error fast-path: result contains error indicators.",
                 should_retry=should_retry,
                 should_replan=not should_retry and state.iteration < state.max_iterations,
+                retry_context=f"Error detected: {content[:200]}",
             )
 
-        # Data-match fast-path: if task keywords appear in the result, likely success
+        if not observation.success:
+            should_retry = step.retries < step.max_retries
+            return Reflection(
+                task_complete=False,
+                confidence=0.3,
+                reasoning="Observation reports failure without specific error pattern.",
+                should_retry=should_retry,
+                should_replan=not should_retry and state.iteration < state.max_iterations,
+                retry_context=f"Observation marked as failed: {content[:200]}",
+            )
+
+        if len(content) < 30:
+            return Reflection(
+                task_complete=False,
+                confidence=0.25,
+                reasoning=f"Result too short ({len(content)} chars) to be meaningful.",
+                should_retry=step.retries < step.max_retries,
+                retry_context="Previous attempt produced insufficient output.",
+            )
+
         task_lower = state.task.lower()
         task_words = [w for w in task_lower.split() if len(w) > 3 and w not in (
             "check", "find", "search", "look", "what", "show", "tell", "please",
             "could", "would", "about", "from", "with", "that", "this",
         )]
         has_err = self._looks_like_error(content)
-        if task_words and observation.success and not has_err:
+        if task_words and observation.success and not has_err and len(content) > 100:
             content_lower = content.lower()
             matched = sum(1 for w in task_words if w in content_lower)
-            if matched >= max(2, len(task_words) // 2) and len(content) > 100:
-                logger.debug("reflection_skipped_data_match", step=step.id, matched=matched)
+            threshold = max(2, len(task_words) * 2 // 3)
+            if matched >= threshold:
+                AuditLog.get().record("reflection", "data_match", f"{matched}/{len(task_words)} keywords", step=step.id)
                 return Reflection(
                     task_complete=True,
-                    confidence=0.88,
-                    reasoning=f"Data-match fast-path: {matched} task keywords found in result.",
+                    confidence=0.8,
+                    reasoning=f"Data-match: {matched}/{len(task_words)} task keywords found in result.",
                     should_retry=False,
                     should_replan=False,
                 )
+
+        if len(content) > 80 and observation.success and step.retries == 0 and not state.errors and not has_err:
+            AuditLog.get().record("reflection", "llm_reflect", "falling_through_to_llm", step=step.id, content_len=len(content))
 
         try:
             result = await self._manager.reflect(
                 task=state.task,
                 result=observation.content,
-                observations=[o.content[:200] for o in state.observations[-5:]],
+                observations=[o.content[:300] for o in state.observations[-5:]],
             )
 
             issues = result.get("issues", [])
@@ -749,22 +806,33 @@ class AgentLoop:
                 and state.iteration < state.max_iterations
             )
 
+            tc = result.get("task_complete", False)
+            if not isinstance(tc, bool):
+                tc = str(tc).lower() in ("true", "yes", "1")
+            conf = float(result.get("confidence", 0.3))
+            conf = max(0.0, min(1.0, conf))
+            reasoning_text = result.get("reasoning", "")
+            retry_ctx = reasoning_text if not tc else None
             return Reflection(
-                task_complete=result.get("task_complete", True),
-                confidence=float(result.get("confidence", 0.5)),
-                reasoning=result.get("reasoning", ""),
+                task_complete=tc,
+                confidence=conf,
+                reasoning=reasoning_text,
                 issues=issues,
                 next_action=suggested_fix,
                 should_retry=should_retry,
                 should_replan=should_replan,
+                retry_context=retry_ctx,
             )
         except Exception as e:
-            logger.debug("reflection_failed", error=str(e))
+            logger.warning("reflection_failed", error=str(e))
+            from sediman.agent.guardrails import AuditLog
+            AuditLog.get().record("reflection", "failed", str(e), step_id=step.id)
             return Reflection(
-                task_complete=observation.success,
-                confidence=0.5 if observation.success else 0.2,
-                reasoning=f"Reflection failed: {e}. Defaulting to observation success.",
+                task_complete=False,
+                confidence=0.2,
+                reasoning=f"Reflection LLM call failed: {e}. Defaulting to incomplete for safety.",
                 should_retry=not observation.success and step.retries < step.max_retries,
+                retry_context=f"Previous attempt produced: {observation.content[:200] if observation.content else 'no output'}",
             )
 
     async def _handle_reflection_result(
@@ -774,30 +842,48 @@ class AgentLoop:
         reflection: Reflection,
         observation: Observation,
     ) -> None:
-        if reflection.task_complete and reflection.confidence >= 0.6:
+        from sediman.agent.guardrails import AuditLog
+
+        if reflection.task_complete and reflection.confidence >= 0.65:
+            AuditLog.get().record("reflection_result", "completed", f"conf={reflection.confidence:.2f}", step=step.id)
             step.status = "completed"
-            step.result = step.result or observation.content[:500]
+            step.result = step.result or observation.content[:2000]
             state.advance_step()
         elif reflection.should_retry and step.retries < step.max_retries:
             step.retries += 1
             step.status = "pending"
-            self._emit(state, f"Retrying step (attempt {step.retries + 1})", detail=step.description[:80])
+            if reflection.retry_context:
+                step.add_failure(reflection.retry_context[:200])
+            enhanced_desc = step.description
+            if step.failure_history:
+                last_err = step.failure_history[-1]
+                enhanced_desc = f"{step.description}\n[Previous attempt failed: {last_err}]"
+            step.description = enhanced_desc
+            import random
+            backoff = min(2 ** step.retries + random.uniform(0, 1), 10)
+            AuditLog.get().record("reflection_result", "retry", f"attempt={step.retries}, backoff={backoff:.1f}s", step=step.id)
+            await asyncio.sleep(backoff)
+            self._emit(state, f"Retrying step (attempt {step.retries + 1}/{step.max_retries})", detail=step.description[:80])
         elif await self._try_lightweight_recovery(state, step, observation):
             self._emit(state, "Recovered via lightweight retry", detail=step.description[:80])
-        elif self._try_fallback(step):
+        elif self._try_fallback(step, state):
             self._emit(
                 state,
                 f"Falling back to {step.strategy.value}",
                 detail=f"Previous strategy {step.original_strategy.value if step.original_strategy else 'unknown'} failed",
             )
-        elif reflection.should_replan and state.iteration < state.max_iterations:
+        elif reflection.should_replan and state.replan_count < state.max_replans:
+            state.replan_count += 1
+            AuditLog.get().record("reflection_result", "replan", f"replan#{state.replan_count}", step=step.id)
             self._emit(state, "Replanning based on reflection...", detail=reflection.reasoning[:100] if reflection.reasoning else "")
             await self._replan(state, reflection)
         else:
-            if reflection.confidence >= 0.3:
+            if reflection.confidence >= 0.5 and reflection.task_complete:
+                AuditLog.get().record("reflection_result", "low_conf_accept", f"conf={reflection.confidence:.2f}", step=step.id)
                 step.status = "completed"
-                step.result = step.result or observation.content[:500]
+                step.result = step.result or observation.content[:2000]
             else:
+                AuditLog.get().record("reflection_result", "failed", f"conf={reflection.confidence:.2f}", step=step.id)
                 step.status = "failed"
                 state.errors.append(f"Step failed: {step.description[:80]}")
             state.advance_step()
@@ -807,21 +893,22 @@ class AgentLoop:
     ) -> bool:
         if step.strategy == Strategy.USE_SKILL:
             return False
-        if step.retries >= step.max_retries + 1:
+        if step.retries >= step.max_retries:
             return False
 
         task_lower = state.task.lower()
-        extraction_kw = ("extract", "get the", "find", "price", "check", "scrape", "read")
+        extraction_kw = ("extract", "get the", "price", "scrape", "read the", "pull")
         is_extraction = any(kw in task_lower for kw in extraction_kw)
 
         if is_extraction and not observation.success:
             try:
+                import re
                 from sediman.web.extract import http_extract
-                url_match = __import__("re").search(r"https?://\S+", step.description or state.task)
+                url_match = re.search(r"https?://[^\s<>\"]+", step.description or state.task)
                 if url_match:
-                    url = url_match.group(0)
+                    url = url_match.group(0).rstrip(".,;:)")
                     markdown, stats = await http_extract(url)
-                    if markdown and len(markdown.strip()) > 100:
+                    if markdown and len(markdown.strip()) > 100 and not self._looks_like_error(markdown):
                         step.result = markdown[:2000]
                         step.status = "completed"
                         state.actions_taken.append({"action": "http_fallback", "url": url})
@@ -830,28 +917,50 @@ class AgentLoop:
             except Exception as e:
                 logger.debug("http_fallback_failed", error=str(e))
 
-        step.retries += 1
-        step.status = "pending"
-        logger.debug("lightweight_retry_refresh", step=step.id, retries=step.retries)
         return False
 
     async def _replan(self, state: AgentState, reflection: Reflection) -> None:
+        from sediman.agent.guardrails import AuditLog, plan_hash
+
         failed_step = state.current_step
         if failed_step:
             failed_step.status = "failed"
 
         new_task = reflection.next_action or state.task
+        failure_ctx = ""
         if reflection.reasoning:
-            new_task = f"{new_task} (Previous approach failed: {reflection.reasoning[:200]})"
+            failure_ctx = f" (Previous approach failed: {reflection.reasoning[:200]})"
+        if failed_step and failed_step.failure_history:
+            failure_ctx += f" [Attempt history: {'; '.join(failed_step.failure_history[-2:])}]"
+        if failure_ctx:
+            new_task = f"{new_task}{failure_ctx}"
 
         plan = await self._manager.plan(new_task, self._conversation)
-        new_steps = self._build_plan_steps(AgentState(task=new_task), plan)
+
+        sig = plan_hash(plan.browser_task or new_task, plan.strategy.value)
+        if sig in state.plan_signatures:
+            AuditLog.get().record("replan", "duplicate_detected", sig, task=new_task[:80])
+            logger.warning("replan_duplicate", signature=sig, task=new_task[:80])
+            for step in state.pending_steps:
+                step.status = "failed"
+                state.errors.append(f"Replan produced duplicate plan: {step.description[:80]}")
+            return
+
+        state.plan_signatures.append(sig)
+
+        new_steps_state = self._build_plan_steps(AgentState(task=new_task), plan)
+
+        dead_steps = [s for s in state.plan_steps if s.status in ("failed",)]
+        if len(dead_steps) > 10:
+            state.plan_steps = [s for s in state.plan_steps if s.status not in ("failed",)]
 
         remaining_index = len(state.plan_steps)
-        for step in new_steps.plan_steps:
+        for step in new_steps_state.plan_steps:
             step.id = remaining_index
             state.plan_steps.append(step)
             remaining_index += 1
+
+        AuditLog.get().record("replan", "new_plan", f"strategy={plan.strategy.value}", steps=len(new_steps_state.plan_steps))
 
     def _assemble_result(self, state: AgentState, plan: ManagerPlan) -> AgentState:
         completed = state.completed_steps
@@ -1071,7 +1180,7 @@ class AgentLoop:
         from sediman.errors import looks_like_error
         return looks_like_error(text)
 
-    def _try_fallback(self, step: PlanStep) -> bool:
+    def _try_fallback(self, step: PlanStep, state: AgentState | None = None) -> bool:
         if step.fallback_attempted:
             return False
 
@@ -1079,10 +1188,14 @@ class AgentLoop:
             Strategy.USE_SKILL: Strategy.DIRECT,
             Strategy.DELEGATE: Strategy.DIRECT,
             Strategy.DECOMPOSE: Strategy.DELEGATE,
+            Strategy.DIRECT: None,
         }
 
         new_strategy = fallback_map.get(step.strategy)
         if new_strategy is None:
+            if state and state.errors:
+                from sediman.agent.guardrails import AuditLog
+                AuditLog.get().record("fallback", "direct_exhausted", "no_fallback_from_direct", step=step.id)
             return False
 
         step.original_strategy = step.original_strategy or step.strategy
@@ -1090,6 +1203,8 @@ class AgentLoop:
         step.fallback_attempted = True
         step.status = "pending"
         step.retries = 0
+        if step.failure_history:
+            step.description = f"{step.description}\n[Fallback from {step.original_strategy.value}: {'; '.join(step.failure_history[-1:])}]"
         return True
 
     def _emit(self, state: AgentState, message: str, detail: str = "") -> None:

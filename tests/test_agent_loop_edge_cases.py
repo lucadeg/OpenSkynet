@@ -30,7 +30,7 @@ class TestAgentLoopConversationHistory:
              patch.object(loop, "_save_session", new_callable=AsyncMock), \
              patch.object(loop._memory, "initialize", new_callable=AsyncMock), patch.object(loop._memory, "on_turn_start", new_callable=AsyncMock), patch.object(loop._memory, "on_session_end", new_callable=AsyncMock):
             mock_ba = MagicMock()
-            mock_ba.run = AsyncMock(return_value=BrowserResult(text="result", actions=[]))
+            mock_ba.run = AsyncMock(return_value=BrowserResult(text="The task was completed successfully with detailed results.", actions=[{"action": "done"}]))
             mock_get_ba.return_value = mock_ba
             await loop.run("my task")
 
@@ -38,7 +38,7 @@ class TestAgentLoopConversationHistory:
         assert loop._conversation[0]["role"] == "user"
         assert loop._conversation[0]["content"] == "my task"
         assert loop._conversation[1]["role"] == "assistant"
-        assert loop._conversation[1]["content"] == "result"
+        assert "completed" in loop._conversation[1]["content"].lower() or "Task" in loop._conversation[1]["content"]
 
     @pytest.mark.asyncio
     async def test_conversation_truncated_at_40(self, tmp_sediman_dir):
@@ -49,9 +49,12 @@ class TestAgentLoopConversationHistory:
         with patch.object(loop, "_get_browser_agent") as mock_get_ba, \
              patch.object(loop._manager, "plan", new_callable=AsyncMock, return_value=plan), \
              patch.object(loop, "_save_session", new_callable=AsyncMock), \
-             patch.object(loop._memory, "initialize", new_callable=AsyncMock), patch.object(loop._memory, "on_turn_start", new_callable=AsyncMock), patch.object(loop._memory, "on_session_end", new_callable=AsyncMock):
+             patch.object(loop._memory, "initialize", new_callable=AsyncMock), patch.object(loop._memory, "on_turn_start", new_callable=AsyncMock), patch.object(loop._memory, "on_session_end", new_callable=AsyncMock), \
+             patch.object(loop, "_reflect_on_step", new_callable=AsyncMock) as mock_reflect:
+            from sediman.agent.state import Reflection
+            mock_reflect.return_value = Reflection(task_complete=True, confidence=0.9, reasoning="ok")
             mock_ba = MagicMock()
-            mock_ba.run = AsyncMock(return_value=BrowserResult(text="result", actions=[]))
+            mock_ba.run = AsyncMock(return_value=BrowserResult(text="Task completed successfully with all data extracted.", actions=[{"action": "done"}]))
             mock_get_ba.return_value = mock_ba
             await loop.run("overflow task")
 

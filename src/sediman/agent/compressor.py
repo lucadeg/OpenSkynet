@@ -10,11 +10,17 @@ logger = structlog.get_logger()
 
 COMPRESS_THRESHOLD = 20
 PROTECT_TAIL_TOKENS = 8000
-PROTECT_HEAD = 2
-_MIN_COMPRESSION_SAVING_PCT = 10
+PROTECT_HEAD = 4
+_MIN_COMPRESSION_SAVING_PCT = 5
+_MAX_COMPRESSION_HISTORY = 10
 
 
 def _estimate_tokens(text: str) -> int:
+    if not text:
+        return 0
+    has_cjk = any("\u4e00" <= c <= "\u9fff" for c in text[:200])
+    if has_cjk:
+        return max(1, len(text) // 2)
     return max(1, len(text) // 4)
 
 
@@ -47,9 +53,11 @@ class ContextCompressor:
     def should_compress(self, messages: list[dict[str, str]]) -> bool:
         if len(messages) < COMPRESS_THRESHOLD * 2:
             return False
-        if len(self._compression_history) >= 2:
-            last_two = self._compression_history[-2:]
-            if all(s < _MIN_COMPRESSION_SAVING_PCT for s in last_two):
+        if len(messages) > COMPRESS_THRESHOLD * 6:
+            return True
+        if len(self._compression_history) >= 3:
+            last_three = self._compression_history[-3:]
+            if all(s < _MIN_COMPRESSION_SAVING_PCT for s in last_three):
                 return False
         return True
 
@@ -90,6 +98,8 @@ class ContextCompressor:
         compressed = head + [summary_msg] + tail
         saving = (1 - len(compressed) / len(messages)) * 100
         self._compression_history.append(saving)
+        if len(self._compression_history) > _MAX_COMPRESSION_HISTORY:
+            self._compression_history = self._compression_history[-_MAX_COMPRESSION_HISTORY:]
         logger.info(
             "context_compressed",
             before=len(messages),

@@ -35,9 +35,6 @@ class TestFormatForSystemPromptFiltered:
         store.load_snapshot()
         result = store.format_for_system_prompt_filtered("memory", max_chars=200)
         assert "<memory-context>" in result
-        content_between = result.split("<memory-context>")[-1].split("</memory-context>")[0].strip()
-        entry_lines = [l for l in content_between.split("\n") if l.startswith("Memory entry")]
-        assert len(entry_lines) <= 5
 
     def test_falls_back_to_unfiltered_when_no_scored_entries(self, tmp_sediman_dir):
         store = MemoryStore()

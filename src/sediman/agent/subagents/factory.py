@@ -5,6 +5,7 @@ from collections.abc import Callable
 
 import structlog
 
+from sediman.agent.guardrails import SharedScratchpad
 from sediman.config import MAX_NESTED_DEPTH
 from sediman.agent.subagents.permissions import PermissionRules
 from sediman.agent.subagents.registry import SubagentRegistry
@@ -38,6 +39,11 @@ class SubagentFactory:
         self.on_step = on_step
         self.flash_mode = flash_mode
         self.max_nested_depth = max_nested_depth
+        self._scratchpad = SharedScratchpad()
+
+    @property
+    def scratchpad(self) -> SharedScratchpad:
+        return self._scratchpad
 
     async def spawn(
         self,
@@ -112,6 +118,7 @@ class SubagentFactory:
             browser_session=browser,
             on_step=self.on_step,
             flash_mode=self.flash_mode,
+            scratchpad=self._scratchpad,
         )
 
         try:
