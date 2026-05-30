@@ -8,6 +8,7 @@ Teach it once. It repeats forever. 24/7.
 
 [![License: BSL 1.1](https://img.shields.io/badge/License-BSL%201.1-blue.svg)](LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/Python-3.11+-green.svg)]()
+[![Discord](https://img.shields.io/badge/Discord-Join-5865F2?logo=discord&logoColor=white)](https://discord.gg/sediman)
 
 </div>
 
@@ -17,225 +18,129 @@ Teach it once. It repeats forever. 24/7.
 
 ---
 
-## Stop doing the same tasks. Every day. Forever.
+## Install
 
-You click the same 10 things every morning. Copy data into spreadsheets. Check the same sites. Post the same content.
+```bash
+curl -fsSL https://get.sediman.ai | bash
+```
 
-**Sediman watches you once. Then does it forever.** A real browser. Real actions. No scripts. No configuration.
+<details>
+<summary>Alternative methods</summary>
+
+```bash
+# pip
+pip install sediman-browse
+
+# or from source
+git clone https://github.com/sediman-agent/sediman-browse.git
+cd sediman-browse && uv sync
+```
+</details>
+
+Then:
+
+```bash
+sediman init          # set your API key
+sediman run "..."     # headless one-shot
+sediman chat          # interactive CLI
+```
+
+### TUI (Rust terminal UI)
+
+```bash
+bun run tui --provider openai --model gpt-4o
+```
+
+| Command | Description |
+|---------|-------------|
+| `/provider` | Select LLM provider |
+| `/model` | Search or switch models |
+| `/memory` | View and edit agent memory |
+| `/skills` | List learned skills |
+| `/schedule` | List scheduled jobs |
+| `/help` | Show all commands |
 
 ---
 
 ## What It Does
 
-| Feature | Description |
-|---------|-------------|
-| **Learn by Showing** | Watch your browser once → replay anytime with one command |
-| **24/7 Automation** | Schedule tasks with cron — runs while you sleep |
-| **Self-Healing** | Pages change? Sediman detects it and patches itself automatically |
-| **Self-Learning** | After each task, it decides: "Should I save this as a reusable skill?" |
-| **Persistent Memory** | Remembers your preferences, brand voice, workflows — across sessions |
-| **Skills Hub** | Browse and install community skills with one command |
-| **Subagent Parallelization** | Split complex tasks across multiple agents working in parallel |
+| | Sediman | Browser Use | Scrapers | RPA Tools |
+|---|---|---|---|---|
+| Real browser (Playwright/Chromium) | Yes | Yes | No | Yes |
+| AI-powered | Yes | Yes | No | No |
+| **Learn by showing** | Yes | No | No | No |
+| **Self-healing** | Yes | No | No | No |
+| **24/7 scheduling** | Yes | No | Manual | Paid add-on |
+| Persistent memory | Yes | No | No | No |
+| Self-learning skills | Yes | No | No | No |
+| Self-hosted | Yes | Yes | N/A | Enterprise pricing |
+
+**Key features:**
+
+- **Learn by Showing** — watch your browser once, replay anytime
+- **Self-Healing** — pages change? Sediman patches itself automatically
+- **Self-Learning** — after each task, saves reusable skills automatically
+- **24/7 Scheduling** — cron-based automation, runs while you sleep
+- **Skills Hub** — browse and install 470+ community skills
+- **Persistent Memory** — remembers preferences across sessions
+- **Parallel Subagents** — split complex tasks across multiple agents
 
 ---
 
-## Architecture
+<details>
+<summary><strong>Architecture</strong></summary>
 
 ```mermaid
 flowchart TB
     subgraph Entry["Entry Points"]
-        CLI([sediman CLI<br/>run, chat, skill, schedule])
-        API([FastAPI Server<br/>REST WebSocket])
-        TUI([Rust TUI<br/>sediman-tui])
-    end
-
-    subgraph Bridge["IPC Bridge"]
-        RPC([Unix Socket<br/>JSON-RPC Server])
-        BridgeRust([sediman-tui-bridge])
+        CLI([sediman CLI])
+        API([FastAPI Server])
+        TUI([Rust TUI])
     end
 
     subgraph AgentCore["Agent Core"]
-        Loop([AgentLoop<br/>think-act-observe-reflect])
-        Manager([Manager Agent<br/>plan strategy])
-        Delegate([Delegate Agent<br/>parallel subagents])
-        Planner([Planner<br/>task decomposition])
-        Compressor([Context Compressor<br/>token reduction])
-        Guardrails([Guardrails<br/>safety checks])
+        Loop([Think-Act-Observe-Reflect Loop])
+        Manager([Manager Agent])
+        Delegate([Parallel Subagents])
     end
 
-    subgraph Subagents["Subagents"]
-        BrowserAgent([Browser Subagent<br/>Chromium via Playwright])
-        SkillAuditor([Skill Auditor<br/>staleness review])
-        SkillLearner([Skill Learner<br/>3-question heuristic])
-        Recorder([Recording Manager<br/>frame capture])
-        TraceToSkill([Trace to Skill<br/>recording converter])
+    subgraph Skills["Skills System"]
+        Engine([CRUD + Versioning])
+        Executor([Auto-Healing Execution])
+        Hub([Community Hub])
     end
 
-    subgraph SkillsSys["Skills System"]
-        Engine([SkillEngine<br/>CRUD, versioning, rollback])
-        Executor([SkillExecutor<br/>execute with auto-healing])
-        Healer([SkillHealer<br/>auto-repair broken skills])
-        Hub([Skills Hub<br/>browse, install, publish])
-        Lock([SkillLockFile<br/>external source tracking])
+    subgraph Mem["Memory"]
+        Store([Dual-File Bounded Storage])
+        Embeddings([Vector Search])
+        Sessions([SQLite FTS5])
     end
 
-    subgraph Mem["Memory System"]
-        Store([MemoryStore<br/>dual-file bounded storage])
-        Entries([MemoryEntry<br/>structured facts])
-        Trajectories([Trajectories<br/>action history])
-        Embeddings([Embeddings<br/>vector storage])
-        Vector([VectorStore<br/>similarity search])
-        Consolidator([Consolidator<br/>LLM background review])
-        Scrubber([Scrubber<br/>prompt injection scan])
-        Security([Security<br/>invisible unicode, exfiltration])
-        Changelog([Changelog<br/>session history])
-        Sessions([SessionStore<br/>SQLite FTS5])
-        Preferences([Preferences<br/>user profile])
+    subgraph Browser["Browser"]
+        Session([Persistent Chromium])
+        Stealth([CloakBrowser Anti-Detect])
     end
 
-    subgraph Browser["Browser Layer"]
-        BrowserSession([BrowserSession<br/>headless/headed])
-        Controller([BrowserController<br/>playwright controller])
-        OpenBrowser([OpenBrowser<br/>Rust sidecar])
-    end
-
-    subgraph Scheduler["Scheduler"]
-        Cron([CronManager<br/>APScheduler 24/7])
-    end
-
-    subgraph Integrations["Integrations"]
-        Discord([Discord Bot])
-        Telegram([Telegram Bot])
-    end
-
-    subgraph Storage["Storage"]
-        DB[(SQLite FTS5)]
-    end
-
-    Entry --> Bridge
-    CLI --> RPC
-    API --> RPC
-    TUI --> BridgeRust --> RPC
-    RPC --> Loop
-    Loop --> Manager
-    Manager --> Delegate
-    Manager --> Planner
-    Planner --> BrowserAgent
-    Loop --> Compressor
-    Loop --> Guardrails
-    BrowserAgent --> Recorder
-    Recorder --> TraceToSkill
-    TraceToSkill --> SkillLearner
-    SkillLearner --> Engine
-    Engine --> Executor
-    Engine --> Hub
-    Engine --> Lock
-    Executor --> Healer
-    Healer --> BrowserSession
-    BrowserSession --> Controller
-    Controller --> OpenBrowser
-    Loop --> Store
-    Store --> Entries
-    Store --> Trajectories
-    Store --> Sessions
-    Store --> Preferences
-    Store --> Consolidator
-    Consolidator --> Embeddings --> Vector
-    Store --> Security
-    Store --> Scrubber
-    Store --> Changelog
-    Scheduler --> Cron
-    Cron --> Executor
-    Integrations --> Discord
-    Integrations --> Telegram
-    Storage --> DB
-
-    style Entry fill:#1a1a2e,color:#eee
-    style Bridge fill:#16213e,color:#eee
-    style AgentCore fill:#0f3460,color:#eee
-    style Subagents fill:#533483,color:#eee
-    style SkillsSys fill:#533483,color:#eee
-    style Mem fill:#e94560,color:#eee
-    style Browser fill:#0f3460,color:#eee
-    style Scheduler fill:#1a1a2e,color:#eee
-    style Integrations fill:#16213e,color:#eee
-    style Storage fill:#16213e,color:#eee
+    Entry --> Loop
+    Loop --> Manager --> Delegate
+    Loop --> Skills
+    Loop --> Mem
+    Loop --> Browser
 ```
 
----
-
-## Quick Start
-
-```bash
-# Install
-git clone https://github.com/sediman-agent/sediman-browse.git
-cd sediman-browse && uv sync
-
-# Option 1: TUI (recommended — Rust terminal UI)
-MINIMAX_API_KEY=sk-... bun run tui --provider minimax --model MiniMax-M2.7
-
-# Option 2: TUI with OpenAI
-OPENAI_API_KEY=sk-... bun run tui --provider openai --model gpt-4o
-
-# Option 3: TUI with custom provider/base URL
-OPENAI_API_KEY=sk-... bun run tui --provider openai --model MyModel --base-url https://my-api.example.com/v1
-
-# Option 4: CLI (headless, one-shot)
-MINIMAX_API_KEY=sk-... uv run sediman run "check Apple stock price on Yahoo Finance"
-
-# Option 5: Chat (interactive Python CLI)
-MINIMAX_API_KEY=sk-... uv run sediman chat --provider minimax --model MiniMax-M2.7
-```
-
-### TUI Commands
-
-| Command | Description |
-|---------|-------------|
-| `/provider` | Select LLM provider (openai, ollama, or custom URL) |
-| `/model` | Search, add, or switch AI models |
-| `/memory` | View and edit agent memory |
-| `/soul` | View and edit agent personality |
-| `/skills` | List learned skills |
-| `/browser headed` | Switch to visible browser mode |
-| `/schedule` | List scheduled jobs |
-| `/help` | Show all commands |
-| `Ctrl+/` | Toggle help overlay |
-| `Ctrl+Enter` | Insert newline in input |
-| `Esc` | Cancel running agent |
+</details>
 
 ---
 
-## Why Sediman?
+## Sediman Cloud
 
-| | Sediman | Browser Use | Scrapers | RPA Tools |
-|---|---|---|---|---|
-| **Real browser** | Yes | Yes | No | Yes |
-| **AI-powered** | Yes | Yes | No | No |
-| **Learn by showing** | Yes | No | No | No |
-| **Self-healing** | Yes | No | No | No |
-| **24/7 scheduling** | Yes | No | Manual | Paid add-on |
-| **Memory** | Yes | No | No | No |
-| **Self-hosted** | Yes | Yes | N/A | Enterprise pricing |
-
----
-
-## Coming Soon: Sediman Cloud
-
-**Don't want to manage your own server?** We're building Sediman Cloud — fully managed hosting with:
-
-- Instant browser sessions — no infrastructure to maintain
-- Always-on automation — 24/7 uptime without your machine running
-- Enterprise-grade security — isolated containers, no data leakage
-- Dashboard & monitoring — track your automations at a glance
-- One-click deploy — turn any skill into a hosted service
-
-Join the waitlist at **[sediman.ai](https://sediman.ai)** and get early access pricing.
+Managed hosting — instant browser sessions, always-on automation, no infrastructure. [Join the waitlist](https://sediman.ai).
 
 ---
 
 ## License
 
-[Business Source License 1.1 (BSL)](LICENSE).
+[Business Source License 1.1](LICENSE).
 
 ---
 
@@ -243,6 +148,6 @@ Join the waitlist at **[sediman.ai](https://sediman.ai)** and get early access p
 
 **If this project helps you, consider giving it a star.**
 
-[Report Bug](https://github.com/sediman/sediman/issues) · [Request Feature](https://github.com/sediman/sediman/issues)
+[Report Bug](https://github.com/sediman-agent/sediman-browse/issues) · [Request Feature](https://github.com/sediman-agent/sediman-browse/issues) · [Discord](https://discord.gg/sediman)
 
 </div>
