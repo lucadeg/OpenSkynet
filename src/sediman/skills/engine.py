@@ -181,6 +181,9 @@ class SkillEngine:
     def get_skill(self, name: str) -> dict[str, Any] | None:
         return self.read(name)
 
+    def list_skills_full(self) -> list[dict[str, Any]]:
+        return self.list_skills()
+
     def list_skills(self) -> list[dict[str, Any]]:
         self._invalidate_cache_if_stale()
 
@@ -279,6 +282,11 @@ class SkillEngine:
         shutil.rmtree(skill_dir)
         self._list_cache = None
         self._read_cache.pop(name, None)
+        try:
+            from sediman.skills.hub import SkillLockFile
+            SkillLockFile().remove(name)
+        except Exception:
+            pass
         return True
 
     def patch(self, name: str, updates: dict[str, Any]) -> dict[str, Any] | None:
@@ -371,32 +379,35 @@ class SkillEngine:
         """Search for skills similar to the given description.
 
         Uses SkillSearchEngine for semantic + keyword search over actual skills,
-        falling back to simple keyword matching if the engine is unavailable.
+        falling back to simple keyword matching if the engine is unavailable
+        or returns no results.
         """
         try:
             from sediman.skills.search import SkillSearchEngine
             search_engine = SkillSearchEngine()
             results = await search_engine.search(description, scope="internal", k=limit)
-            return [
-                {"text": r.name, "score": r.score, "name": r.name, "description": r.description}
-                for r in results
-            ]
+            if results:
+                return [
+                    {"text": r.name, "score": r.score, "name": r.name, "description": r.description}
+                    for r in results
+                ]
         except Exception:
             logger.warning("find_similar_fallback_to_keyword", description=description[:50])
-            all_skills = self.list_skills()
-            desc_lower = description.lower()
-            scored: list[tuple[int, dict[str, Any]]] = []
-            for s in all_skills:
-                s_name = s.get("name", "").lower()
-                s_desc = s.get("description", "").lower()
-                score = sum(1 for w in desc_lower.split() if w in s_name or w in s_desc)
-                if score > 0:
-                    scored.append((score, s))
-            scored.sort(key=lambda x: -x[0])
-            return [
-                {"text": s[1].get("name", ""), "score": s[0], "name": s[1].get("name", ""), "description": s[1].get("description", "")}
-                for s in scored[:limit]
-            ]
+
+        all_skills = self.list_skills()
+        desc_lower = description.lower()
+        scored: list[tuple[int, dict[str, Any]]] = []
+        for s in all_skills:
+            s_name = s.get("name", "").lower()
+            s_desc = s.get("description", "").lower()
+            score = sum(1 for w in desc_lower.split() if w in s_name or w in s_desc)
+            if score > 0:
+                scored.append((score, s))
+        scored.sort(key=lambda x: -x[0])
+        return [
+            {"text": s[1].get("name", ""), "score": s[0], "name": s[1].get("name", ""), "description": s[1].get("description", "")}
+            for s in scored[:limit]
+        ]
 
     def verify_and_rollback(self, name: str, llm=None) -> tuple[bool, str]:
         existing = self.read(name)
