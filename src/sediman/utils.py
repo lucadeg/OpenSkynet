@@ -49,11 +49,13 @@ def extract_json_from_text(text: str) -> dict | list | None:
     elif "```" in text:
         text = text.split("```")[1].split("```")[0]
     text = text.strip()
-    if not text.startswith("{"):
-        start = text.find("{")
-        end = text.rfind("}")
-        if start >= 0 and end > start:
-            text = text[start : end + 1]
+    if not text.startswith(("{", "[")):
+        for open_ch, close_ch in [("{", "}"), ("[", "]")]:
+            start = text.find(open_ch)
+            end = text.rfind(close_ch)
+            if start >= 0 and end > start:
+                text = text[start : end + 1]
+                break
         else:
             return None
     import json
