@@ -309,3 +309,96 @@ class ToolLoop:
             )
 
         return response or LLMResponse(text="", tool_calls=[], done=True)
+
+    async def run_streaming(
+        self,
+        messages: list[dict[str, Any]],
+        system: str | None = None,
+        on_tool_call: Callable[[str, dict[str, Any]], None] | None = None,
+        on_streaming_text: Callable[[str], None] | None = None,
+    ) -> LLMResponse:
+        """Like run() but streams text tokens via on_streaming_text callback.
+
+        Each LLM call uses chat_stream_with_tools() so the caller sees
+        tokens as they arrive. Tool calls are still dispatched normally.
+        """
+        from sediman.agent.guardrails import Budget
+
+        all_messages: list[dict[str, Any]] = []
+        if system:
+            all_messages.append({"role": "system", "content": system})
+        all_messages.extend(messages)
+
+        response: LLMResponse | None = None
+        for _round in range(self.max_rounds):
+            if self._budget is not None:
+                exhausted, reason = self._budget.is_exhausted()
+                if exhausted:
+                    logger.warning("tool_loop_budget_exhausted", reason=reason, round=_round)
+                    break
+
+            InterruptSignal.get().check()
+
+            response = await self.llm.chat_stream_with_tools(
+                messages=all_messages,
+                tools=self.registry.get_definitions(),
+                on_token=on_streaming_text,
+            )
+
+            if not response.tool_calls:
+                InterruptSignal.get().check()
+                return response
+
+            if response.text and on_streaming_text:
+                pass
+
+            all_messages.append(
+                {
+                    "role": "assistant",
+                    "content": response.text or "",
+                    "tool_calls": [
+                        {
+                            "id": tc.id,
+                            "type": "function",
+                            "function": {
+                                "name": tc.name,
+                                "arguments": json.dumps(tc.arguments),
+                            },
+                        }
+                        for tc in response.tool_calls
+                    ],
+                }
+            )
+
+            if len(response.tool_calls) > 1:
+                async def _dispatch_one(tc: Any) -> tuple[str, ToolResult]:
+                    if on_tool_call:
+                        on_tool_call(tc.name, tc.arguments)
+                    result = await self.registry.dispatch(tc.name, tc.arguments)
+                    return (tc.id, result)
+
+                dispatch_results = await asyncio.gather(
+                    *[_dispatch_one(tc) for tc in response.tool_calls]
+                )
+                for tc_id, result in dispatch_results:
+                    all_messages.append(
+                        {"role": "tool", "tool_call_id": tc_id, "content": result.output}
+                    )
+            else:
+                tc = response.tool_calls[0]
+                if on_tool_call:
+                    on_tool_call(tc.name, tc.arguments)
+                result = await self.registry.dispatch(tc.name, tc.arguments)
+                all_messages.append(
+                    {"role": "tool", "tool_call_id": tc.id, "content": result.output}
+                )
+
+        if response and response.tool_calls:
+            tool_summary = "; ".join(f"{tc.name}({list(tc.arguments.keys())})" for tc in response.tool_calls)
+            return LLMResponse(
+                text=f"[Tool loop exhausted after {self.max_rounds} rounds. Pending: {tool_summary}]",
+                tool_calls=[],
+                done=True,
+            )
+
+        return response or LLMResponse(text="", tool_calls=[], done=True)

@@ -4,6 +4,7 @@ members = [
     "crates/sediman-tui-core",
     "crates/sediman-tui-bridge",
     "crates/sediman-tui",
+    "app/src-tauri",
 ]
 
 [workspace.package]
