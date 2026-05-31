@@ -693,7 +693,7 @@ mod tests {
 
     #[test]
     fn test_render_code_block_empty() {
-        let lines = render_markdown("```\n```");
+        let _lines = render_markdown("```\n```");
         assert!(true);
     }
 
