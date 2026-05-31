@@ -2,7 +2,7 @@
 
 # OpenSkynet
 
-**Your AI browser employee that works while you sleep.**
+**Your AI Terminator**
 
 Teach it once. It repeats forever. 24/7.
 
