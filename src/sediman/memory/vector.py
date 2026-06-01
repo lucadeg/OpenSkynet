@@ -261,9 +261,11 @@ class VectorStore:
         if new_texts:
             provider = self._ensure_provider()
             vecs = await provider.embed(new_texts)
+            new_text_indices: list[int] = []
             for text, meta, vec in zip(new_texts, new_metas, vecs):
-                idx = self._add_vector(text, vec, meta)
-                new_indices = [idx if x == -1 else x for x in new_indices]
+                new_text_indices.append(self._add_vector(text, vec, meta))
+            it = iter(new_text_indices)
+            new_indices = [next(it) if x == -1 else x for x in new_indices]
 
         return new_indices
 
