@@ -385,8 +385,8 @@ pub fn render_connect_picker(buf: &mut CellBuffer, area: Rect, app: &App) {
 
     const NUM_VISIBLE: usize = 10;
     let visible = integrations.len().min(NUM_VISIBLE);
-    let modal_w: u16 = (area.width * 50 / 100).clamp(44, 56);
-    let modal_h = (5u16 + visible as u16).min(area.height.saturating_sub(2));
+    let modal_w: u16 = (area.width * 55 / 100).clamp(48, 60);
+    let modal_h = (6u16 + visible as u16).min(area.height.saturating_sub(2));
     let frame = ModalFrame::new(buf, area, app, modal_w, modal_h);
     let inner_x = frame.inner_x;
     let inner_w = frame.inner_w;
@@ -404,7 +404,7 @@ pub fn render_connect_picker(buf: &mut CellBuffer, area: Rect, app: &App) {
     for (i, integ) in integrations.iter().enumerate() {
         if i < scroll || i >= end_idx { continue; }
         let row_y = list_start_y + row as u16;
-        if row_y >= frame.modal.bottom().saturating_sub(2) { break; }
+        if row_y >= frame.modal.bottom().saturating_sub(1) { break; }
 
         let (status_icon, status_label) = if integ.connected {
             ("\u{25cf}", "connected")
@@ -421,10 +421,12 @@ pub fn render_connect_picker(buf: &mut CellBuffer, area: Rect, app: &App) {
                 Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
             }
         };
+        let max_name = inner_w.saturating_sub(18);
+        let truncated_name = truncate_str(&cap_name, max_name);
         let display = format!(
-            "{} {}    {}",
+            "{} {}  {}",
             status_icon,
-            truncate_str(&cap_name, inner_w.saturating_sub(20)),
+            truncated_name,
             status_label
         );
 
@@ -447,8 +449,9 @@ pub fn render_connect_picker(buf: &mut CellBuffer, area: Rect, app: &App) {
     }
 
     let hints_y = frame.modal.bottom().saturating_sub(2);
-    buf.draw_str(frame.modal.x + 2, hints_y,
-        " \u{2191}\u{2193} navigate \u{2502} Enter connect \u{2502} d disconnect \u{2502} Esc close",
+    let hints = "\u{2191}\u{2193} nav \u{2502} Enter connect \u{2502} d disconnect \u{2502} Esc close";
+    let hints_display = truncate_str(hints, inner_w);
+    buf.draw_str(inner_x, hints_y, hints_display,
         Style::new().fg(t.text_muted).bg(t.background));
 }
 
