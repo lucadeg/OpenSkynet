@@ -17,6 +17,44 @@ logger = structlog.get_logger()
 
 _TOOL_REGISTRY: dict[str, dict[str, Any]] = {}
 
+TOOLSET_DEFINITIONS: dict[str, dict[str, Any]] = {
+    "file": {"description": "File reading, writing, searching, and editing", "tools": ["read_file", "write_file", "patch", "search_files", "list_files"]},
+    "terminal": {"description": "Shell command execution and process management", "tools": ["terminal", "process"]},
+    "web": {"description": "Web search and page content extraction", "tools": ["web_search", "web_extract"]},
+    "browser": {"description": "Interactive browser automation", "tools": []},
+    "skills": {"description": "Skill management and discovery", "tools": ["skill_search", "skill_manage"]},
+    "memory": {"description": "Persistent cross-session memory", "tools": ["memory"]},
+    "session_search": {"description": "Search past conversation sessions", "tools": ["session_search"]},
+    "cronjob": {"description": "Schedule and manage recurring tasks", "tools": ["cronjob", "list_schedules", "get_schedule_results"]},
+    "delegation": {"description": "Spawn isolated subagent instances", "tools": ["delegate_task"]},
+    "code_execution": {"description": "Run Python scripts that call agent tools", "tools": ["execute_code"]},
+    "vision": {"description": "Image analysis via vision AI", "tools": ["vision_analyze"]},
+    "image_gen": {"description": "Text-to-image generation", "tools": ["image_generate"]},
+    "tts": {"description": "Text-to-speech audio generation", "tools": ["text_to_speech"]},
+    "messaging": {"description": "Cross-platform message delivery", "tools": ["send_message"]},
+    "clarify": {"description": "Ask user questions for clarification", "tools": ["clarify"]},
+    "todo": {"description": "Session task list management", "tools": ["todo"]},
+    "safe": {"description": "Read-only research (no file writes, no terminal)", "tools": ["web_search", "web_extract", "vision_analyze"]},
+    "debugging": {"description": "Debug bundle (file + terminal + web)", "composite": True, "includes": ["file", "terminal", "web"]},
+}
+
+
+def resolve_toolset(name: str) -> set[str]:
+    if name in ("all", "*"):
+        all_tools: set[str] = set()
+        for ts_def in TOOLSET_DEFINITIONS.values():
+            all_tools.update(ts_def.get("tools", []))
+        return all_tools
+    ts_def = TOOLSET_DEFINITIONS.get(name)
+    if ts_def is None:
+        return set()
+    if ts_def.get("composite"):
+        resolved: set[str] = set()
+        for included in ts_def.get("includes", []):
+            resolved |= resolve_toolset(included)
+        return resolved
+    return set(ts_def.get("tools", []))
+
 
 def tool(func: Callable | None = None, *, name: str | None = None, description: str | None = None):
     """Decorator that registers a function as a callable tool.
@@ -150,6 +188,7 @@ class ToolRegistry:
     def __init__(self) -> None:
         self._tools: dict[str, ToolDefinition] = {}
         self._handlers: dict[str, ToolHandler] = {}
+        self._toolsets: dict[str, str] = {}
         self._checkpoint_manager: Any | None = None
 
     def set_checkpoint_manager(self, manager: Any) -> None:
@@ -162,11 +201,25 @@ class ToolRegistry:
     ) -> None:
         self._tools[definition.name] = definition
         self._handlers[definition.name] = handler
+        self._toolsets[definition.name] = definition.toolset
 
-    def get_definitions(self) -> list[ToolDefinition]:
-        return list(self._tools.values())
+    def _filter_toolset(self, toolsets: list[str] | None) -> set[str] | None:
+        if toolsets is None:
+            return None
+        allowed: set[str] = set()
+        for ts in toolsets:
+            allowed |= resolve_toolset(ts)
+        registered = set(self._tools.keys())
+        return allowed & registered
 
-    def get_openai_tools(self) -> list[dict[str, Any]]:
+    def get_definitions(self, toolsets: list[str] | None = None) -> list[ToolDefinition]:
+        allowed = self._filter_toolset(toolsets)
+        if allowed is None:
+            return list(self._tools.values())
+        return [t for t in self._tools.values() if t.name in allowed]
+
+    def get_openai_tools(self, toolsets: list[str] | None = None) -> list[dict[str, Any]]:
+        definitions = self.get_definitions(toolsets=toolsets)
         return [
             {
                 "type": "function",
@@ -176,8 +229,17 @@ class ToolRegistry:
                     "parameters": t.parameters,
                 },
             }
-            for t in self._tools.values()
+            for t in definitions
         ]
+
+    def get_toolsets(self) -> dict[str, list[str]]:
+        result: dict[str, list[str]] = {}
+        for tool_name, ts_name in self._toolsets.items():
+            result.setdefault(ts_name, []).append(tool_name)
+        return result
+
+    def get_tools_by_toolset(self, toolset: str) -> list[ToolDefinition]:
+        return [t for t in self._tools.values() if self._toolsets.get(t.name) == toolset]
 
     async def dispatch(self, tool_name: str, arguments: dict[str, Any]) -> ToolResult:
         handler = self._handlers.get(tool_name)

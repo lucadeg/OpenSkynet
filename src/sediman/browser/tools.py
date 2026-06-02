@@ -218,6 +218,96 @@ async def _handle_browser_list_tabs(**kwargs: Any) -> ToolResult:
     return ToolResult(success=True, output=result)
 
 
+async def _handle_browser_console(**kwargs: Any) -> ToolResult:
+    ctrl = get_default_browser_controller()
+    if not ctrl:
+        return ToolResult(success=False, output="Browser controller not initialized.")
+    if not ctrl.is_started:
+        return ToolResult(success=False, output="Browser not started. Call browser_navigate first.")
+    try:
+        logs = await ctrl._page.evaluate("() => { try { return window.__consoleLogs || []; } catch { return []; } }")
+        if logs:
+            lines = []
+            for entry in logs[:50]:
+                if isinstance(entry, dict):
+                    lines.append(f"[{entry.get('level', 'log')}] {entry.get('text', '')[:200]}")
+                else:
+                    lines.append(str(entry)[:200])
+            return ToolResult(success=True, output="\n".join(lines))
+        js_errors = await ctrl._page.evaluate("() => { try { return window.__jsErrors || []; } catch { return []; } }")
+        if js_errors:
+            lines = [f"[error] {str(e)[:200]}" for e in js_errors[:20]]
+            return ToolResult(success=True, output="\n".join(lines))
+        return ToolResult(success=True, output="No console output captured yet.")
+    except Exception as e:
+        return ToolResult(success=False, output=f"Failed to get console output: {e}")
+
+
+async def _handle_browser_get_images(**kwargs: Any) -> ToolResult:
+    ctrl = get_default_browser_controller()
+    if not ctrl:
+        return ToolResult(success=False, output="Browser controller not initialized.")
+    if not ctrl.is_started:
+        return ToolResult(success=False, output="Browser not started. Call browser_navigate first.")
+    try:
+        images = await ctrl._page.evaluate("""() => {
+            return Array.from(document.querySelectorAll('img')).map(img => ({
+                src: img.src || '',
+                alt: img.alt || '',
+                width: img.naturalWidth || 0,
+                height: img.naturalHeight || 0,
+            })).filter(img => img.src);
+        }""")
+        if not images:
+            return ToolResult(success=True, output="No images found on the page.")
+        lines = []
+        for i, img in enumerate(images[:30], 1):
+            lines.append(f"  {i}. {img.get('src', '')[:120]}")
+            if img.get('alt'):
+                lines.append(f"     alt: {img['alt'][:60]}")
+        return ToolResult(
+            success=True,
+            output=f"Found {len(images)} image(s):\n" + "\n".join(lines),
+            data={"images": images[:30], "total": len(images)},
+        )
+    except Exception as e:
+        return ToolResult(success=False, output=f"Failed to get images: {e}")
+
+
+async def _handle_browser_vision(question: str = "Describe what you see on this page in detail. Focus on visual layout, charts, images, and any text that stands out.", **kwargs: Any) -> ToolResult:
+    ctrl = get_default_browser_controller()
+    if not ctrl:
+        return ToolResult(success=False, output="Browser controller not initialized.")
+    if not ctrl.is_started:
+        return ToolResult(success=False, output="Browser not started. Call browser_navigate first.")
+    try:
+        b64 = await ctrl.screenshot()
+        if not b64:
+            return ToolResult(success=False, output="Screenshot failed.")
+        from sediman.agent.tools.media import _handle_vision_analyze
+        result = await _handle_vision_analyze(
+            image_url=f"data:image/jpeg;base64,{b64}",
+            question=question,
+        )
+        return result
+    except Exception as e:
+        return ToolResult(success=False, output=f"Browser vision failed: {e}")
+
+
+async def _handle_browser_dialog(action: str = "accept", prompt_text: str = "", **kwargs: Any) -> ToolResult:
+    ctrl = get_default_browser_controller()
+    if not ctrl:
+        return ToolResult(success=False, output="Browser controller not initialized.")
+    if not ctrl.is_started:
+        return ToolResult(success=False, output="Browser not started.")
+    try:
+        page = ctrl._page
+        await page.evaluate(f"() => {{ window.__dialogAction = '{action}'; window.__dialogPromptText = '{prompt_text}'; }}")
+        return ToolResult(success=True, output=f"Dialog handler set to '{action}'. Next dialog will be handled automatically.")
+    except Exception as e:
+        return ToolResult(success=False, output=f"Dialog handler setup failed: {e}")
+
+
 def register_browser_tools(registry: ToolRegistry) -> None:
     """Register all browser tools into the given ToolRegistry."""
 
@@ -436,4 +526,64 @@ def register_browser_tools(registry: ToolRegistry) -> None:
         _handle_browser_list_tabs,
     )
 
-    logger.info("browser_tools_registered", count=18)
+    registry.register(
+        ToolDefinition(
+            name="browser_console",
+            description="Get browser console output and JavaScript errors from the current page. Returns console.log/warn/error/info messages and uncaught JS exceptions. Use this to detect silent JavaScript errors, failed API calls, and application warnings.",
+            parameters={"type": "object", "properties": {}},
+        ),
+        _handle_browser_console,
+    )
+
+    registry.register(
+        ToolDefinition(
+            name="browser_get_images",
+            description="Get a list of all images on the current page with their URLs, alt text, and dimensions. Useful for finding images to analyze with the vision tool or for scraping image URLs.",
+            parameters={"type": "object", "properties": {}},
+        ),
+        _handle_browser_get_images,
+    )
+
+    registry.register(
+        ToolDefinition(
+            name="browser_vision",
+            description="Take a screenshot of the current page and analyze it with vision AI. Use this when you need to visually understand what's on the page — especially useful for CAPTCHAs, visual verification challenges, complex layouts, charts, or when the text snapshot is insufficient.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "question": {
+                        "type": "string",
+                        "description": "What to look for or analyze in the screenshot (default: describe everything visible)",
+                        "default": "Describe what you see on this page in detail.",
+                    },
+                },
+            },
+        ),
+        _handle_browser_vision,
+    )
+
+    registry.register(
+        ToolDefinition(
+            name="browser_dialog",
+            description="Handle native JavaScript dialogs (alert, confirm, prompt, beforeunload). Set action='accept' to accept the dialog, or 'dismiss' to cancel it. For prompt dialogs, provide prompt_text for the response.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": ["accept", "dismiss"],
+                        "description": "How to respond to the dialog (default: accept)",
+                        "default": "accept",
+                    },
+                    "prompt_text": {
+                        "type": "string",
+                        "description": "Text to enter for prompt dialogs (only used with action='accept')",
+                        "default": "",
+                    },
+                },
+            },
+        ),
+        _handle_browser_dialog,
+    )
+
+    logger.info("browser_tools_registered", count=22)
