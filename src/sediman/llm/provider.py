@@ -36,6 +36,7 @@ class ToolDefinition:
     name: str
     description: str
     parameters: dict[str, Any]
+    toolset: str = "default"
 
 
 class LLMProvider(ABC):

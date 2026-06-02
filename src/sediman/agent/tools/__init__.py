@@ -54,7 +54,7 @@ def get_subagent_factory() -> Any | None:
     return _subagent_factory
 
 
-def create_agent_tool_registry() -> ToolRegistry:
+def create_agent_tool_registry(toolsets: list[str] | None = None) -> ToolRegistry:
     from .misc import (
         _handle_clarify,
         _handle_cronjob,
@@ -75,6 +75,10 @@ def create_agent_tool_registry() -> ToolRegistry:
         _handle_search_files,
         _handle_write_file,
     )
+    from .execute_code import _handle_execute_code
+    from .process import _handle_process
+    from .media import _handle_vision_analyze, _handle_image_generate, _handle_text_to_speech
+    from .messaging import _handle_send_message
 
     registry = ToolRegistry()
 
@@ -105,6 +109,7 @@ def create_agent_tool_registry() -> ToolRegistry:
                 },
                 "required": ["query"],
             },
+            toolset="skills",
         ),
         _handle_skill_search,
     )
@@ -141,6 +146,7 @@ def create_agent_tool_registry() -> ToolRegistry:
                 },
                 "required": ["action"],
             },
+            toolset="skills",
         ),
         _handle_skill_manage,
     )
@@ -159,6 +165,7 @@ def create_agent_tool_registry() -> ToolRegistry:
                 },
                 "required": ["query"],
             },
+            toolset="web",
         ),
         _handle_web_search,
     )
@@ -181,6 +188,7 @@ def create_agent_tool_registry() -> ToolRegistry:
                 },
                 "required": ["task"],
             },
+            toolset="delegation",
         ),
         _handle_delegate_task,
     )
@@ -206,6 +214,7 @@ def create_agent_tool_registry() -> ToolRegistry:
                     },
                 },
             },
+            toolset="cronjob",
         ),
         _handle_get_schedule_results,
     )
@@ -236,6 +245,7 @@ def create_agent_tool_registry() -> ToolRegistry:
                 },
                 "required": ["command"],
             },
+            toolset="terminal",
         ),
         _handle_terminal,
     )
@@ -259,6 +269,7 @@ def create_agent_tool_registry() -> ToolRegistry:
                 },
                 "required": ["question"],
             },
+            toolset="clarify",
         ),
         _handle_clarify,
     )
@@ -295,6 +306,7 @@ def create_agent_tool_registry() -> ToolRegistry:
                     },
                 },
             },
+            toolset="todo",
         ),
         _handle_todo,
     )
@@ -307,6 +319,7 @@ def create_agent_tool_registry() -> ToolRegistry:
                 "type": "object",
                 "properties": {},
             },
+            toolset="cronjob",
         ),
         _handle_list_schedules,
     )
@@ -333,6 +346,7 @@ def create_agent_tool_registry() -> ToolRegistry:
                 },
                 "required": ["path"],
             },
+            toolset="file",
         ),
         _handle_read_file,
     )
@@ -354,6 +368,7 @@ def create_agent_tool_registry() -> ToolRegistry:
                     },
                 },
             },
+            toolset="file",
         ),
         _handle_list_files,
     )
@@ -380,6 +395,7 @@ def create_agent_tool_registry() -> ToolRegistry:
                 },
                 "required": ["path", "content"],
             },
+            toolset="file",
         ),
         _handle_write_file,
     )
@@ -406,6 +422,7 @@ def create_agent_tool_registry() -> ToolRegistry:
                 },
                 "required": ["path", "old", "new"],
             },
+            toolset="file",
         ),
         _handle_patch,
     )
@@ -432,6 +449,7 @@ def create_agent_tool_registry() -> ToolRegistry:
                 },
                 "required": ["query"],
             },
+            toolset="file",
         ),
         _handle_search_files,
     )
@@ -454,6 +472,7 @@ def create_agent_tool_registry() -> ToolRegistry:
                 },
                 "required": ["url"],
             },
+            toolset="web",
         ),
         _handle_web_extract,
     )
@@ -479,6 +498,7 @@ def create_agent_tool_registry() -> ToolRegistry:
                     },
                 },
             },
+            toolset="session_search",
         ),
         _handle_session_search,
     )
@@ -510,6 +530,7 @@ def create_agent_tool_registry() -> ToolRegistry:
                 },
                 "required": ["action"],
             },
+            toolset="memory",
         ),
         _handle_memory,
     )
@@ -549,8 +570,153 @@ def create_agent_tool_registry() -> ToolRegistry:
                 },
                 "required": ["action"],
             },
+            toolset="cronjob",
         ),
         _handle_cronjob,
+    )
+
+    registry.register(
+        ToolDefinition(
+            name="execute_code",
+            description="Run a Python script that can call agent tools programmatically. Use this when you need 3+ tool calls with processing logic between them, need to filter/reduce large tool outputs before they enter your context, need conditional branching, or need to collapse multi-step pipelines into zero-context-cost turns.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "code": {
+                        "type": "string",
+                        "description": "Python code to execute. The code runs in a subprocess. Use print() to capture output.",
+                    },
+                },
+                "required": ["code"],
+            },
+            toolset="code_execution",
+        ),
+        _handle_execute_code,
+    )
+
+    registry.register(
+        ToolDefinition(
+            name="process",
+            description="Manage background processes started with terminal(background=true). Actions: 'list' (show all), 'poll' (check status + new output), 'log' (full output), 'kill' (terminate), 'write' (send input to stdin).",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": ["list", "poll", "log", "kill", "write"],
+                        "description": "Action to perform (default: list)",
+                    },
+                    "session_id": {
+                        "type": "string",
+                        "description": "Process session ID (required for poll, log, kill, write)",
+                    },
+                    "data": {
+                        "type": "string",
+                        "description": "Data to write to process stdin (for write action)",
+                    },
+                },
+                "required": ["action"],
+            },
+            toolset="terminal",
+        ),
+        _handle_process,
+    )
+
+    registry.register(
+        ToolDefinition(
+            name="vision_analyze",
+            description="Analyze images using AI vision. Provide either a local file path (image_path) or a URL (image_url). Optionally specify a question about the image.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "image_path": {
+                        "type": "string",
+                        "description": "Local file path to the image (supports ~)",
+                    },
+                    "image_url": {
+                        "type": "string",
+                        "description": "URL of the image to analyze",
+                    },
+                    "question": {
+                        "type": "string",
+                        "description": "What to ask about the image (default: describe in detail)",
+                        "default": "Describe this image in detail.",
+                    },
+                },
+            },
+            toolset="vision",
+        ),
+        _handle_vision_analyze,
+    )
+
+    registry.register(
+        ToolDefinition(
+            name="image_generate",
+            description="Generate an image from a text prompt using AI. Returns a URL to the generated image. Requires FAL_KEY environment variable.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "prompt": {
+                        "type": "string",
+                        "description": "Description of the image to generate",
+                    },
+                },
+                "required": ["prompt"],
+            },
+            toolset="image_gen",
+        ),
+        _handle_image_generate,
+    )
+
+    registry.register(
+        ToolDefinition(
+            name="text_to_speech",
+            description="Convert text to speech audio. Returns the path to the saved audio file. Requires OPENAI_API_KEY. Supports voices: alloy, echo, fable, onyx, nova, shimmer.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "text": {
+                        "type": "string",
+                        "description": "Text to convert to speech",
+                    },
+                    "voice": {
+                        "type": "string",
+                        "description": "Voice to use (alloy, echo, fable, onyx, nova, shimmer)",
+                        "default": "alloy",
+                    },
+                },
+                "required": ["text"],
+            },
+            toolset="tts",
+        ),
+        _handle_text_to_speech,
+    )
+
+    registry.register(
+        ToolDefinition(
+            name="send_message",
+            description="Send a message to a connected messaging platform (Discord, Telegram, etc.), or list available targets. Use action='list' to see available targets, action='send' to deliver a message. Target format: 'platform:channel_key' (e.g., 'discord:alerts', 'telegram:admin').",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": ["list", "send"],
+                        "description": "Action to perform (default: send)",
+                    },
+                    "target": {
+                        "type": "string",
+                        "description": "Target in format 'platform:channel_key' (e.g., 'discord:alerts')",
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": "Message content to send",
+                    },
+                },
+            },
+            toolset="messaging",
+        ),
+        _handle_send_message,
     )
 
     return registry
