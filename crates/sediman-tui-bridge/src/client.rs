@@ -446,15 +446,26 @@ pub struct IntegrationInfo {
 
 impl ApiClient {
     pub async fn list_integrations(&self) -> BridgeResult<Vec<IntegrationInfo>> {
-        self.call("list_integrations", serde_json::json!({})).await
+        let wrapper: serde_json::Value = self.call("integration.list", serde_json::json!({})).await?;
+        let integrations = wrapper.get("integrations").cloned().unwrap_or(wrapper);
+        let map: std::collections::HashMap<String, IntegrationInfo> =
+            serde_json::from_value(integrations).unwrap_or_default();
+        Ok(map.into_values().collect())
     }
 
     pub async fn integration_status(&self, name: &str) -> BridgeResult<IntegrationInfo> {
-        self.call("integration_status", serde_json::json!({"name": name})).await
+        self.call("integration.status", serde_json::json!({"name": name})).await
     }
 
     pub async fn configure_integration(&self, name: &str, config: serde_json::Value) -> BridgeResult<()> {
-        self.call("configure_integration", serde_json::json!({"name": name, "config": config})).await
+        let mut params = serde_json::json!({"name": name});
+        if let serde_json::Value::Object(map) = config {
+            for (k, v) in map {
+                params[k] = v;
+            }
+        }
+        let _: serde_json::Value = self.call("integration.configure", params).await?;
+        Ok(())
     }
 }
 

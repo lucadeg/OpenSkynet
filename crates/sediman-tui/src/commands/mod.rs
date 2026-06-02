@@ -2,7 +2,6 @@ pub mod skills;
 pub mod memory;
 pub mod model;
 pub mod provider;
-#[allow(dead_code)]
 pub mod integration;
 pub mod schedule;
 pub mod sessions;
@@ -46,6 +45,8 @@ pub fn register_commands(registry: &mut CommandRegistry) {
     // Tasks
     registry.register(&delegate::CMD_DELEGATE);
     registry.register(&delegate::CMD_PARALLEL);
+    // Integrations
+    registry.register(&integration::CMD_CONNECT);
 }
 
 #[cfg(test)]
@@ -57,7 +58,7 @@ mod tests {
         let mut registry = CommandRegistry::new();
         register_commands(&mut registry);
         let all = registry.all();
-        assert_eq!(all.len(), 21);
+        assert_eq!(all.len(), 22);
     }
 
     #[test]

@@ -54,7 +54,7 @@ pub async fn handle_provider(app: &mut App, args: &str) {
 
 pub static CMD_PROVIDER: Command = Command {
     name: "/provider",
-    aliases: &["/connect"],
+    aliases: &[],
     description: "Connect provider & enter API key",
     category: CommandCategory::Agent,
 };

@@ -7,7 +7,7 @@ use sediman_tui_core::event::AppEvent;
 
 use crate::app::{App, AppModal};
 use crate::commands::{
-    browser, coder, delegate, memory, model, plan, provider, schedule, sessions,
+    browser, coder, delegate, integration, memory, model, plan, provider, schedule, sessions,
     skills, soul, system, theming,
 };
 
@@ -1303,7 +1303,7 @@ async fn handle_slash(app: &mut App, input: &str) {
         }
         "/remember" => memory::handle_remember(app, args).await,
         "/models" => model::handle_models(app, args).await,
-        "/provider" | "/connect" => provider::handle_provider(app, args).await,
+        "/provider" => provider::handle_provider(app, args).await,
         "/schedule" => {
             schedule::handle_schedule(app, args).await;
             refresh_sidebar(app).await;
@@ -1317,6 +1317,7 @@ async fn handle_slash(app: &mut App, input: &str) {
         "/soul" => soul::handle_soul(app, args).await,
         "/themes" => theming::handle_themes(app, args).await,
         "/coder" => coder::handle_coder(app, args).await,
+        "/connect" => integration::handle_connect(app, args).await,
         _ => {
             app.add_system_message(format!("Unknown command: {}. Type /help", cmd_name));
         }
