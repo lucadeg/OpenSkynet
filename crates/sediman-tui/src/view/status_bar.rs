@@ -42,5 +42,7 @@ pub fn render_status_bar(buf: &mut CellBuffer, area: Rect, app: &App) {
     let model = app.model.as_deref().unwrap_or("default");
     let model_text = format!(" {} ", model);
     let model_x = area.right().saturating_sub(display_width(&model_text));
-    buf.draw_str(model_x, y, &model_text, Style::new().bg(t.background_darker).fg(t.text_muted));
+    if model_x > x {
+        buf.draw_str(model_x, y, &model_text, Style::new().bg(t.background_darker).fg(t.text_muted));
+    }
 }

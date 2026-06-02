@@ -45,6 +45,10 @@ struct Args {
 
     #[arg(long)]
     gpu: bool,
+
+    /// Show backend (Python) stderr output in the terminal
+    #[arg(long)]
+    verbose: bool,
 }
 
 fn find_project_root() -> Option<PathBuf> {
@@ -72,6 +76,7 @@ async fn ensure_backend(
     provider: &str,
     model: Option<&str>,
     base_url: Option<&str>,
+    verbose: bool,
 ) -> Option<tokio::process::Child> {
     // If socket exists, verify the backend is actually responsive
     if tokio::fs::metadata(socket_path).await.is_ok() {
@@ -159,7 +164,9 @@ async fn ensure_backend(
                 let reader = tokio::io::BufReader::new(stderr);
                 let mut lines = reader.lines();
                 while let Ok(Some(line)) = lines.next_line().await {
-                    eprintln!("[backend] {}", line);
+                    if verbose {
+                        eprintln!("[backend] {}", line);
+                    }
                 }
             });
         }
@@ -228,6 +235,7 @@ async fn main() {
         &args.provider,
         args.model.as_deref(),
         args.base_url.as_deref(),
+        args.verbose,
     ).await;
 
     let bridge = sediman_tui_bridge::ApiClient::new(&args.socket);
