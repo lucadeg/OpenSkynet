@@ -1,4 +1,4 @@
-use sediman_tui_core::renderer::{CellBuffer, Rect, Style, TextAttributes};
+use sediman_tui_core::renderer::{CellBuffer, Rect, Style, TextAttributes, display_width};
 use crate::app::{App, AgentMode};
 
 pub fn render_input(buf: &mut CellBuffer, area: Rect, app: &mut App) {
@@ -55,7 +55,7 @@ pub fn render_input(buf: &mut CellBuffer, area: Rect, app: &mut App) {
     app.editor.set_prompt(prompt);
 
     // Inner editor area: starts after badge on first row, full width on subsequent rows
-    let badge_w = badge.chars().count() as u16;
+    let badge_w = display_width(&badge) as u16;
     let inner_start = x_left + 2 + badge_w + 1;
     let inner_w = x_right.saturating_sub(inner_start);
 
@@ -76,6 +76,6 @@ pub fn render_input(buf: &mut CellBuffer, area: Rect, app: &mut App) {
     } else {
         " enter send \u{2502} tab mode \u{2502} / commands"
     };
-    let hint_x = x_right.saturating_sub(hint.len() as u16 + 1);
+    let hint_x = x_right.saturating_sub(display_width(hint) + 1);
     buf.draw_str(hint_x, row_bot, hint, Style::new().fg(t.text_muted).bg(t.background));
 }

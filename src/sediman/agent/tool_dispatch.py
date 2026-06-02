@@ -353,7 +353,9 @@ class ToolLoop:
             if len(response.tool_calls) > 1:
                 async def _dispatch_one(tc: Any) -> tuple[str, ToolResult]:
                     if on_tool_call:
-                        on_tool_call(tc.name, tc.arguments)
+                        result_cb = on_tool_call(tc.name, tc.arguments)
+                        if inspect.isawaitable(result_cb):
+                            await result_cb
                     result = await self.registry.dispatch(tc.name, tc.arguments)
                     return (tc.id, result)
 
@@ -367,7 +369,9 @@ class ToolLoop:
             else:
                 tc = response.tool_calls[0]
                 if on_tool_call:
-                    on_tool_call(tc.name, tc.arguments)
+                    result_cb = on_tool_call(tc.name, tc.arguments)
+                    if inspect.isawaitable(result_cb):
+                        await result_cb
                 result = await self.registry.dispatch(tc.name, tc.arguments)
                 all_messages.append(
                     {"role": "tool", "tool_call_id": tc.id, "content": result.output}
@@ -449,7 +453,9 @@ class ToolLoop:
             if len(response.tool_calls) > 1:
                 async def _dispatch_one(tc: Any) -> tuple[str, ToolResult]:
                     if on_tool_call:
-                        on_tool_call(tc.name, tc.arguments)
+                        result_cb = on_tool_call(tc.name, tc.arguments)
+                        if inspect.isawaitable(result_cb):
+                            await result_cb
                     result = await self.registry.dispatch(tc.name, tc.arguments)
                     return (tc.id, result)
 
@@ -463,7 +469,9 @@ class ToolLoop:
             else:
                 tc = response.tool_calls[0]
                 if on_tool_call:
-                    on_tool_call(tc.name, tc.arguments)
+                    result_cb = on_tool_call(tc.name, tc.arguments)
+                    if inspect.isawaitable(result_cb):
+                        await result_cb
                 result = await self.registry.dispatch(tc.name, tc.arguments)
                 all_messages.append(
                     {"role": "tool", "tool_call_id": tc.id, "content": result.output}
