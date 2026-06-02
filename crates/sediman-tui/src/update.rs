@@ -823,7 +823,7 @@ pub async fn handle_message(app: &mut App, event: AppEvent, event_tx: &mpsc::Unb
                             })
                             .collect();
                         if let Some(session) = filtered.get(app.session_selected) {
-                            let sid = session.id.to_string();
+                            let sid = session.id.clone();
                             let task_preview = session.task.clone();
                             match app.bridge.get_session_detail(&sid).await {
                                 Ok(detail) => {
@@ -874,7 +874,7 @@ pub async fn handle_message(app: &mut App, event: AppEvent, event_tx: &mpsc::Unb
                                 })
                                 .collect();
                             if let Some(session) = filtered.get(app.session_selected) {
-                                let sid = session.id.to_string();
+                                let sid = session.id.clone();
                                 match app.bridge.delete_session(&sid).await {
                                     Ok(()) => {
                                         app.add_system_message(format!("Deleted session #{}", sid));
@@ -906,7 +906,7 @@ pub async fn handle_message(app: &mut App, event: AppEvent, event_tx: &mpsc::Unb
                                 })
                                 .collect();
                             if let Some(session) = filtered.get(app.session_selected) {
-                                let sid = session.id.to_string();
+                                let sid = session.id.clone();
                                 match app.bridge.delete_session(&sid).await {
                                     Ok(()) => {
                                         app.add_system_message(format!("Deleted session #{}", sid));
@@ -1308,7 +1308,7 @@ async fn handle_slash(app: &mut App, input: &str) {
             schedule::handle_schedule(app, args).await;
             refresh_sidebar(app).await;
         }
-        "/sessions" | "/session" => sessions::handle_sessions(app, args).await,
+        "/sessions" => sessions::handle_sessions(app, args).await,
         "/browser" => browser::handle_browser(app, args).await,
         "/screenshot" => browser::handle_screenshot(app, args).await,
         "/delegate" => delegate::handle_delegate(app, args).await,
