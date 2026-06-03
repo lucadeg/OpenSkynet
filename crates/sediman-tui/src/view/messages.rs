@@ -660,7 +660,7 @@ mod tests {
 
     #[test]
     fn test_format_elapsed_zero() {
-        assert_eq!(format_elapsed(0), "0s");
+        assert_eq!(format_elapsed(0), "< 1s");
     }
 
     #[test]
