@@ -526,7 +526,7 @@ impl App {
         skill_created: Option<String>,
         scheduled_job: Option<String>,
     ) {
-        if let Some(ChatMessage::Agent { result, success: s, elapsed_secs: e, skill_created: sc, scheduled_job: sj, selected_tab, .. }) = self.messages.last_mut() {
+        if let Some(ChatMessage::Agent { result, success: s, elapsed_secs: e, skill_created: sc, scheduled_job: sj, selected_tab, tab_expanded, .. }) = self.messages.last_mut() {
             *result = Some(result_text);
             *s = success;
             *e = elapsed_secs;
@@ -534,6 +534,8 @@ impl App {
             *sj = scheduled_job;
             // Auto-switch to Response tab when result is available
             *selected_tab = AgentTab::Response;
+            // Auto-expand when switching to Response tab
+            *tab_expanded = true;
         }
         self.agent_running = false;
         self.streaming_text.clear();
