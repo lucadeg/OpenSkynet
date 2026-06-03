@@ -1264,8 +1264,8 @@ async def serve() -> None:
     from sediman.integrations import setup_integrations, start_listeners
     setup_integrations()
 
-    # Now set the message handler after adapters are registered
-    gateway_runner.set_message_handler(gateway_message_handler)
+    # Note: Message handlers are set on adapters, not on GatewayRunner directly
+    # via adapter.set_message_handler() calls in register_adapter()
 
     # Start the GatewayRunner
     await gateway_runner.start()
