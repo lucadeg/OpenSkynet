@@ -113,8 +113,13 @@ pub fn render_messages(buf: &mut CellBuffer, area: Rect, app: &mut App) {
     // Auto-scroll: show latest messages (scroll to bottom of view)
     // scroll_offset = 0 means show newest content at bottom
     // scroll_offset = max_scroll means show oldest content at bottom
+    // Only auto-scroll if user is already near the newest content
     if app.auto_scroll {
-        app.scroll_offset = 0;
+        // Only reset if we're already close to the newest content (scroll < 10)
+        // This prevents bouncing back when user is actively scrolling up
+        if app.scroll_offset < 10 || max_scroll < 10 {
+            app.scroll_offset = 0;
+        }
         app.auto_scroll = false;
     }
     let scroll = app.scroll_offset.min(max_scroll);
@@ -126,19 +131,17 @@ pub fn render_messages(buf: &mut CellBuffer, area: Rect, app: &mut App) {
         }
     }
 
-    // ── Render lines from bottom up (chat-style) ──
+    // ── Render lines from bottom up (chat-style: newest at bottom) ──
     // Scroll offset: 0 = newest at bottom, max_scroll = oldest at bottom
-    // To scroll up, we skip the OLDEST lines first (from start of lines)
-    let skip_from_start = if scroll > 0 {
-        // When scrolling up (showing older content), skip from oldest end
-        // The higher scroll_offset, the more we skip from the start
-        scroll.min(total_lines.saturating_sub(visible_height))
-    } else {
-        0
-    };
+    // Higher scroll_offset = show older content (skip more from newest end)
+    let skip_from_newest = scroll.min(total_lines.saturating_sub(visible_height));
+    let take_count = visible_height.min(total_lines);
+
+    // Reverse to start from newest, skip oldest of newest, then take visible_count
+    let window = lines.iter().rev().skip(skip_from_newest as usize).take(take_count as usize);
 
     let mut y = area.bottom().saturating_sub(1);
-    for line in lines.iter().skip(skip_from_start as usize).rev() {
+    for line in window {
         if y < area.y {
             break;
         }
