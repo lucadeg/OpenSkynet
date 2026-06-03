@@ -15,14 +15,30 @@ pub async fn handle_doctor(app: &mut App, key: crossterm::event::KeyEvent) -> bo
             true
         }
         KeyCode::Up | KeyCode::Char('k') => {
-            if let Some(AppModal::Doctor { ref mut cursor, .. }) = app.active_modal {
-                if *cursor > 0 { *cursor -= 1; }
+            if let Some(AppModal::Doctor { ref mut cursor, ref mut scroll, .. }) = app.active_modal {
+                if *cursor > 0 {
+                    *cursor -= 1;
+                    // Keep cursor visible: ensure scroll never exceeds cursor
+                    if *scroll > *cursor as u16 {
+                        *scroll = *cursor as u16;
+                    }
+                }
             }
             true
         }
         KeyCode::Down | KeyCode::Char('j') => {
-            if let Some(AppModal::Doctor { ref checks, ref mut cursor, .. }) = app.active_modal {
-                if *cursor < checks.len().saturating_sub(1) { *cursor += 1; }
+            if let Some(AppModal::Doctor { ref checks, ref mut cursor, ref mut scroll, .. }) = app.active_modal {
+                if *cursor < checks.len().saturating_sub(1) {
+                    *cursor += 1;
+                    // Keep cursor visible: scroll when cursor reaches the bottom edge
+                    const EDGE_OFFSET: usize = 8;
+                    if *cursor >= EDGE_OFFSET && *cursor < checks.len() {
+                        let target_scroll = (*cursor as u16).saturating_sub(EDGE_OFFSET as u16 - 2);
+                        if *scroll < target_scroll {
+                            *scroll = target_scroll;
+                        }
+                    }
+                }
             }
             true
         }
@@ -90,3 +106,6 @@ pub async fn handle_doctor(app: &mut App, key: crossterm::event::KeyEvent) -> bo
         _ => false,
     }
 }
+
+#[cfg(test)]
+mod tests;
