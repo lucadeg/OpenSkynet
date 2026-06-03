@@ -17,7 +17,7 @@ pub mod search;
 pub mod checkpoint;
 pub mod update;
 
-use sediman_tui_core::command::{CommandRegistry, CommandCategory};
+use sediman_tui_core::command::CommandRegistry;
 
 pub fn register_commands(registry: &mut CommandRegistry) {
     // Core
@@ -66,7 +66,8 @@ pub fn register_commands(registry: &mut CommandRegistry) {
 
 #[cfg(test)]
 mod tests {
-    use super::{CommandCategory, CommandRegistry};
+    use sediman_tui_core::command::CommandCategory;
+    use super::CommandRegistry;
         use super::register_commands;
 
     #[test]
@@ -135,7 +136,8 @@ mod tests {
 
 #[cfg(test)]
 mod comprehensive_command_tests {
-    use super::{CommandCategory, CommandRegistry, register_commands};
+    use sediman_tui_core::command::CommandCategory;
+    use super::{CommandRegistry, register_commands};
 
     #[test]
     fn test_all_command_categories_covered() {

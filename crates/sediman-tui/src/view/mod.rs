@@ -94,12 +94,9 @@ pub fn render_into(buf: &mut CellBuffer, app: &mut App) {
 
 #[cfg(test)]
 mod comprehensive_view_tests {
-    use super::*;
-
     #[test]
     fn test_render_function_exists() {
-        // Verify render_into is callable
-        let mut buf = sediman_tui_core::renderer::CellBuffer::new(80, 24);
+        let _buf = sediman_tui_core::renderer::CellBuffer::new(80, 24);
         // Can't fully test without an App instance, but we verify the function exists
         assert!(true); // Placeholder for structural test
     }

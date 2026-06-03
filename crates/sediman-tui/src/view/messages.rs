@@ -383,6 +383,7 @@ fn render_message(msg: &ChatMessage, lines: &mut Vec<MessageLine>, app: &App, ma
 }
 
 /// Line types for rendering
+#[allow(dead_code)]
 enum MessageLine {
     Empty,
     Text { text: String, style: Style },
@@ -390,14 +391,17 @@ enum MessageLine {
 }
 
 impl MessageLine {
+    #[allow(dead_code)]
     fn empty() -> Self {
         MessageLine::Empty
     }
 
+    #[allow(dead_code)]
     fn text(text: impl Into<String>, style: Style) -> Self {
         MessageLine::Text { text: text.into(), style }
     }
 
+    #[allow(dead_code)]
     fn collapsible(label: impl Into<String>, expanded: bool, style: Style) -> Self {
         MessageLine::Collapsible { label: label.into(), expanded, style }
     }
