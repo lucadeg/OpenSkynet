@@ -56,7 +56,7 @@ class StatePrimitives:
             ```python
             results = sdk.state.load("cve_results")
             if results:
-                print(f"Loaded {len(results)} cached CVEs")
+                logger.info("state_loaded", name="cve_results", count=len(results))
             ```
         """
         state_path = self._state_dir / f"{name}.json"
@@ -79,7 +79,7 @@ class StatePrimitives:
             ```python
             states = sdk.state.list()
             for state in states:
-                print(f"Saved state: {state}")
+                logger.info("saved_state", name=state)
             ```
         """
         if not self._state_dir.exists():

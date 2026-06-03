@@ -75,7 +75,7 @@ class RetrievePrimitives:
             ```python
             hits = await sdk.retrieve.web("python async await")
             for hit in hits:
-                print(f"{hit.title}: {hit.url}")
+                logger.info("search_hit", title=hit.title, url=hit.url)
             ```
         """
         if provider == "google":
@@ -146,7 +146,7 @@ class RetrievePrimitives:
             all_hits = await sdk.retrieve.web_many(queries, concurrency=3)
 
             for i, hits in enumerate(all_hits):
-                print(f"{queries[i]}: {len(hits)} results")
+                logger.info("search_results", query=queries[i], count=len(hits))
             ```
         """
         if not queries:

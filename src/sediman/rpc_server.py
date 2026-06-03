@@ -1301,6 +1301,11 @@ def main() -> None:
     """Entry point: python -m sediman.rpc_server."""
     import sys
 
+    # Setup file-based logging first
+    from sediman.logging import setup_logging
+    log_level = os.environ.get("SEDIMAN_LOG_LEVEL", "INFO")
+    setup_logging(log_level)
+
     provider = os.environ.get("SEDIMAN_PROVIDER", "openai")
     model = os.environ.get("SEDIMAN_MODEL")
     base_url = os.environ.get("SEDIMAN_BASE_URL") or os.environ.get("OLLAMA_BASE_URL")
