@@ -1,6 +1,6 @@
 use sediman_tui_core::renderer::{CellBuffer, Rect, Style, TextAttributes, display_width, truncate_str};
 use sediman_tui_core::renderer::Color;
-use crate::app::{App, ModalLineStyle};
+use crate::app::{App, AppModal, ModalLineStyle};
 
 struct ModalFrame {
     modal: Rect,
@@ -1260,3 +1260,49 @@ pub fn render_doctor_modal(
     buf.draw_str(inner_x, footer_y, "Enter: install | r: re-check | \u{2191}\u{2193}: navigate", Style::new().fg(t.text_muted));
 }
 
+
+/// Render the memory system picker modal.
+pub fn render_memory_system_picker(buf: &mut CellBuffer, area: Rect, app: &App) {
+    let t = &app.theme;
+
+    if let Some(AppModal::MemorySystemPicker { ref systems, ref selected }) = app.active_modal {
+        const NUM_VISIBLE: usize = 5;
+        let visible = systems.len().min(NUM_VISIBLE);
+        let modal_w: u16 = 40;
+        let modal_h = (4u16 + visible as u16).min(area.height.saturating_sub(2));
+        let frame = ModalFrame::new(buf, area, app, modal_w, modal_h);
+        let inner_x = frame.inner_x;
+        let inner_w = frame.inner_w;
+
+        draw_rounded_border(buf, frame.modal, Style::new().fg(t.text_muted).bg(t.background));
+
+        buf.draw_str(inner_x, frame.modal.y + 1, "Select Memory System",
+            Style::new().fg(t.primary).bg(t.background).add_modifier(TextAttributes::bold()));
+
+        let list_start_y = frame.modal.y + 3;
+        let mut y = list_start_y;
+
+        for (i, system) in systems.iter().enumerate() {
+            if i >= *selected + NUM_VISIBLE || i < selected.saturating_sub(NUM_VISIBLE) {
+                continue;
+            }
+
+            let is_selected = i == *selected;
+            let bg = if is_selected { t.primary } else { t.background };
+            let fg = if is_selected { t.background } else { t.text };
+
+            buf.draw_str(inner_x, y, " ", Style::new().fg(t.text).bg(t.background));
+            buf.draw_str(inner_x + 1, y, system, Style::new().fg(fg).bg(bg).add_modifier(TextAttributes::bold()));
+            let padding = inner_w.saturating_sub(4 + system.len());
+            buf.draw_str(inner_x + 2 + system.len() as u16, y, &" ".repeat(padding),
+                Style::new().fg(t.text).bg(t.background));
+
+            y += 1;
+        }
+
+        // Footer hints
+        let footer_y = frame.modal.bottom() - 2;
+        buf.draw_str(inner_x, footer_y, "Enter: select | \u{2191}\u{2193}: navigate | Esc: cancel",
+            Style::new().fg(t.text_muted));
+    }
+}

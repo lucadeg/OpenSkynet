@@ -13,6 +13,21 @@ logger = structlog.get_logger()
 
 DISCORD_BOT_TOKEN_ENV = "DISCORD_BOT_TOKEN"
 TELEGRAM_BOT_TOKEN_ENV = "TELEGRAM_BOT_TOKEN"
+SLACK_BOT_TOKEN_ENV = "SLACK_BOT_TOKEN"
+SLACK_SIGNING_SECRET_ENV = "SLACK_SIGNING_SECRET"
+SLACK_APP_LEVEL_TOKEN_ENV = "SLACK_APP_LEVEL_TOKEN"
+WHATSAPP_ACCESS_TOKEN_ENV = "WHATSAPP_ACCESS_TOKEN"
+WHATSAPP_PHONE_NUMBER_ID_ENV = "WHATSAPP_PHONE_NUMBER_ID"
+WHATSAPP_VERIFY_TOKEN_ENV = "WHATSAPP_VERIFY_TOKEN"
+WHATSAPP_WEBHOOK_URL_ENV = "WHATSAPP_WEBHOOK_URL"
+LARK_APP_ID_ENV = "LARK_APP_ID"
+LARK_APP_SECRET_ENV = "LARK_APP_SECRET"
+LARK_VERIFY_TOKEN_ENV = "LARK_VERIFY_TOKEN"
+LARK_ENCRYPT_KEY_ENV = "LARK_ENCRYPT_KEY"
+LARK_WEBHOOK_URL_ENV = "LARK_WEBHOOK_URL"
+WECHAT_ACCOUNT_ID_ENV = "WECHAT_ACCOUNT_ID"
+WECHAT_TOKEN_ENV = "WECHAT_TOKEN"
+WECHAT_BASE_URL_ENV = "WECHAT_BASE_URL"
 
 
 def _default_config() -> dict[str, Any]:
@@ -36,6 +51,54 @@ def _default_config() -> dict[str, Any]:
                 "users": [],
             },
         },
+        "slack": {
+            "enabled": False,
+            "token": os.environ.get(SLACK_BOT_TOKEN_ENV, ""),
+            "signing_secret": os.environ.get(SLACK_SIGNING_SECRET_ENV, ""),
+            "app_level_token": os.environ.get(SLACK_APP_LEVEL_TOKEN_ENV, ""),
+            "channels": {},
+            "whitelist": {
+                "enabled": False,
+                "users": [],
+                "teams": [],
+            },
+        },
+        "whatsapp": {
+            "enabled": False,
+            "token": os.environ.get(WHATSAPP_ACCESS_TOKEN_ENV, ""),
+            "phone_id": os.environ.get(WHATSAPP_PHONE_NUMBER_ID_ENV, ""),
+            "verify_token": os.environ.get(WHATSAPP_VERIFY_TOKEN_ENV, ""),
+            "webhook_url": os.environ.get(WHATSAPP_WEBHOOK_URL_ENV, ""),
+            "contacts": {},
+            "whitelist": {
+                "enabled": False,
+                "users": [],
+            },
+        },
+        "lark": {
+            "enabled": False,
+            "app_id": os.environ.get(LARK_APP_ID_ENV, ""),
+            "app_secret": os.environ.get(LARK_APP_SECRET_ENV, ""),
+            "verify_token": os.environ.get(LARK_VERIFY_TOKEN_ENV, ""),
+            "encrypt_key": os.environ.get(LARK_ENCRYPT_KEY_ENV, ""),
+            "webhook_url": os.environ.get(LARK_WEBHOOK_URL_ENV, ""),
+            "chats": {},
+            "whitelist": {
+                "enabled": False,
+                "users": [],
+            },
+        },
+        "wechat": {
+            "enabled": False,
+            "account_id": os.environ.get(WECHAT_ACCOUNT_ID_ENV, ""),
+            "token": os.environ.get(WECHAT_TOKEN_ENV, ""),
+            "base_url": os.environ.get(WECHAT_BASE_URL_ENV, "https://ilinkai.weixin.qq.com"),
+            "contacts": {},
+            "whitelist": {
+                "enabled": False,
+                "users": [],
+            },
+        },
     }
 
 
@@ -47,24 +110,44 @@ def load_config() -> dict[str, Any]:
             for key in default:
                 if key in user_config:
                     default[key].update(user_config[key])
-                    if not default[key].get("token"):
-                        env_key = (
-                            DISCORD_BOT_TOKEN_ENV if key == "discord" else TELEGRAM_BOT_TOKEN_ENV
-                        )
-                        default[key]["token"] = os.environ.get(env_key, "")
+                    # Handle token/app_id fallback for each platform
+                    if not default[key].get("token") and not default[key].get("app_id"):
+                        if key == "discord":
+                            default[key]["token"] = os.environ.get(DISCORD_BOT_TOKEN_ENV, "")
+                        elif key == "telegram":
+                            default[key]["token"] = os.environ.get(TELEGRAM_BOT_TOKEN_ENV, "")
+                        elif key == "slack":
+                            default[key]["token"] = os.environ.get(SLACK_BOT_TOKEN_ENV, "")
+                        elif key == "whatsapp":
+                            default[key]["token"] = os.environ.get(WHATSAPP_ACCESS_TOKEN_ENV, "")
+                        elif key == "lark":
+                            default[key]["app_id"] = os.environ.get(LARK_APP_ID_ENV, "")
+                            default[key]["app_secret"] = os.environ.get(LARK_APP_SECRET_ENV, "")
+                        elif key == "wechat":
+                            default[key]["account_id"] = os.environ.get(WECHAT_ACCOUNT_ID_ENV, "")
+                            default[key]["token"] = os.environ.get(WECHAT_TOKEN_ENV, "")
                     # Ensure whitelist field exists
                     if "whitelist" not in default[key]:
-                        default[key]["whitelist"] = {
-                            "enabled": False,
-                            "users": [],
-                            "servers": [] if key == "discord" else [],
-                        }
+                        if key == "discord":
+                            default[key]["whitelist"] = {"enabled": False, "users": [], "servers": []}
+                        elif key == "slack":
+                            default[key]["whitelist"] = {"enabled": False, "users": [], "teams": []}
+                        elif key == "whatsapp":
+                            default[key]["whitelist"] = {"enabled": False, "users": []}
+                        elif key == "lark":
+                            default[key]["whitelist"] = {"enabled": False, "users": []}
+                        elif key == "wechat":
+                            default[key]["whitelist"] = {"enabled": False, "users": []}
+                        else:
+                            default[key]["whitelist"] = {"enabled": False, "users": []}
                     else:
                         # Ensure all whitelist keys exist
                         if "users" not in default[key]["whitelist"]:
                             default[key]["whitelist"]["users"] = []
                         if key == "discord" and "servers" not in default[key]["whitelist"]:
                             default[key]["whitelist"]["servers"] = []
+                        if key == "slack" and "teams" not in default[key]["whitelist"]:
+                            default[key]["whitelist"]["teams"] = []
             return default
         except (json.JSONDecodeError, OSError) as e:
             logger.warning("integrations_config_load_failed", error=str(e))

@@ -60,6 +60,23 @@ pub async fn handle_remember(app: &mut App, args: &str) {
     }
 }
 
+/// `/memory system` — switch between memory systems (file/hy).
+pub async fn handle_memory_system(app: &mut App, _args: &str) {
+    app.open_memory_system_picker();
+}
+
+/// `/memory status` — show memory system status and statistics.
+pub async fn handle_memory_status(app: &mut App, _args: &str) {
+    match app.bridge.memory_get_stats().await {
+        Ok(stats) => {
+            app.show_memory_stats(stats);
+        }
+        Err(e) => {
+            app.add_error_message(format!("Failed to get memory stats: {}", e));
+        }
+    }
+}
+
 pub static CMD_MEMORY: Command = Command {
     name: "/memory",
     aliases: &[],
@@ -71,5 +88,19 @@ pub static CMD_REMEMBER: Command = Command {
     name: "/remember",
     aliases: &[],
     description: "Save to memory: /remember <text>",
+    category: CommandCategory::Sessions,
+};
+
+pub static CMD_MEMORY_SYSTEM: Command = Command {
+    name: "/memory system",
+    aliases: &[],
+    description: "Switch between memory systems (file/hy)",
+    category: CommandCategory::Sessions,
+};
+
+pub static CMD_MEMORY_STATUS: Command = Command {
+    name: "/memory status",
+    aliases: &[],
+    description: "Show memory system status and statistics",
     category: CommandCategory::Sessions,
 };
