@@ -316,6 +316,11 @@ async fn main() {
         app_state.coder_backend = saved_config.coder_backend;
     }
 
+    // Apply saved search mode
+    if !saved_config.search_mode.is_empty() {
+        app_state.search_mode = saved_config.search_mode;
+    }
+
     if args.gpu {
         #[cfg(feature = "gpu")]
         {

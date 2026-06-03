@@ -53,6 +53,7 @@ pub fn save_config_now(app: &App) {
         },
         headless: app.headless,
         coder_backend: app.coder_backend.clone(),
+        search_mode: app.search_mode.clone(),
     };
     if let Err(e) = config.save() {
         eprintln!("Warning: {}", e);

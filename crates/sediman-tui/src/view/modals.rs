@@ -1173,6 +1173,67 @@ pub fn render_coder_picker(buf: &mut CellBuffer, area: Rect, app: &App) {
     }
 }
 
+const SEARCH_MODES: &[&str] = &["auto", "simple", "advanced"];
+
+pub fn render_search_mode_picker(buf: &mut CellBuffer, area: Rect, app: &App) {
+    let t = &app.theme;
+    let count = SEARCH_MODES.len();
+    let modal_w: u16 = 44;
+    // Height: border(2) + top_pad(1) + title(1) + blank(1) + items + bottom_pad(1)
+    let modal_h = (6u16 + count as u16).min(area.height.saturating_sub(2));
+    let frame = ModalFrame::new(buf, area, app, modal_w, modal_h);
+    let inner_x = frame.inner_x;
+
+    // Border: rounded corners, TextMuted
+    let border_style = Style::new().fg(t.text_muted).bg(t.background);
+    draw_rounded_border(buf, frame.modal, border_style);
+
+    // Title
+    buf.draw_str(inner_x, frame.modal.y + 1, "Select Search Mode",
+        Style::new().fg(t.primary).bg(t.background).add_modifier(TextAttributes::bold()));
+
+    // Description
+    let desc = if frame.inner_w >= 40 {
+        "Auto: agent chooses, Simple: web_search, Advanced: SearchSDK"
+    } else {
+        "Auto, Simple, Advanced"
+    };
+    buf.draw_str(inner_x, frame.modal.y + 2, truncate_str(desc, frame.inner_w),
+        Style::new().fg(t.text_muted).bg(t.background));
+
+    // Items starting at y+4
+    let start_y = frame.modal.y + 4;
+    for (i, mode) in SEARCH_MODES.iter().enumerate() {
+        let row_y = start_y + i as u16;
+        let selected = i == app.search_mode_picker_selected;
+        let is_current = *mode == app.search_mode;
+
+        let label = match *mode {
+            "auto" => "auto - agent chooses best method",
+            "simple" => "simple - web_search (fast, simple)",
+            "advanced" => "advanced - SearchSDK (complex research)",
+            _ => *mode,
+        };
+        let label_str = if is_current {
+            format!("{} (current)", label)
+        } else {
+            label.to_string()
+        };
+        let display = truncate_str(&label_str, frame.inner_w);
+
+        if selected {
+            for sx in (frame.modal.x + 1)..(frame.modal.right() - 1) {
+                buf.put_char(sx, row_y, ' ', Style::new().bg(t.primary).fg(t.background));
+            }
+            buf.draw_str(inner_x, row_y, display,
+                Style::new().bg(t.primary).fg(t.background).add_modifier(TextAttributes::bold()));
+        } else {
+            let fg = if is_current { t.secondary } else { t.text };
+            buf.draw_str(inner_x, row_y, display, Style::new().fg(fg).bg(t.background));
+        }
+    }
+}
+
 pub fn render_doctor_modal(
     buf: &mut CellBuffer,
     area: Rect,
