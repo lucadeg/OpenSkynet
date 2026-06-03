@@ -1260,3 +1260,386 @@ class TestGatewayRunnerLifecycle:
 
         # Handler should be cleared
         assert adapter._message_handler is None
+
+
+# =============================================================================
+# Enhanced Discord Adapter Tests (Media Support)
+# =============================================================================
+
+class TestDiscordAdapterMediaSupport:
+    """Test Discord adapter media functionality."""
+
+    def test_discord_media_send_methods_exist(self):
+        """Test that all media send methods are defined."""
+        adapter = DiscordAdapter(None)
+
+        # Check media methods exist
+        assert hasattr(adapter, "send_image")
+        assert hasattr(adapter, "send_image_file")
+        assert hasattr(adapter, "send_video")
+        assert hasattr(adapter, "send_voice")
+        assert hasattr(adapter, "send_document")
+        assert hasattr(adapter, "send_typing")
+        assert hasattr(adapter, "stop_typing")
+        assert hasattr(adapter, "edit_message")
+        assert hasattr(adapter, "delete_message")
+        assert hasattr(adapter, "format_message")
+
+    def test_discord_deduplicator_initialization(self):
+        """Test that deduplicator is initialized."""
+        adapter = DiscordAdapter(None)
+
+        assert adapter._deduplicator is not None
+
+    def test_discord_duplicate_detection(self):
+        """Test message deduplication."""
+        adapter = DiscordAdapter(None)
+
+        # First call should not be duplicate
+        assert not adapter.is_duplicate("msg_123")
+
+        # Second call with same ID should be duplicate
+        assert adapter.is_duplicate("msg_123")
+
+    def test_discord_send_typing_stub(self):
+        """Test send_typing method exists and can be called."""
+        adapter = DiscordAdapter(None)
+
+        import asyncio
+
+        async def test_typing():
+            # Should not raise even without client
+            await adapter.send_typing("123")
+
+        asyncio.run(test_typing())
+
+    def test_discord_stop_typing_stub(self):
+        """Test stop_typing is a no-op."""
+        adapter = DiscordAdapter(None)
+
+        import asyncio
+
+        async def test_stop_typing():
+            # Should not raise
+            await adapter.stop_typing("123")
+
+        asyncio.run(test_stop_typing())
+
+    def test_discord_format_message_passthrough(self):
+        """Test format_message passes through content."""
+        adapter = DiscordAdapter(None)
+
+        content = "**Bold** and *italic*"
+        formatted = adapter.format_message(content)
+
+        # Discord supports markdown, should pass through
+        assert formatted == content
+
+
+# =============================================================================
+# Enhanced Telegram Adapter Tests (Media Support)
+# =============================================================================
+
+class TestTelegramAdapterMediaSupport:
+    """Test Telegram adapter media functionality."""
+
+    def test_telegram_media_send_methods_exist(self):
+        """Test that all media send methods are defined."""
+        adapter = TelegramAdapter(None)
+
+        # Check media methods exist
+        assert hasattr(adapter, "send_image")
+        assert hasattr(adapter, "send_image_file")
+        assert hasattr(adapter, "send_video")
+        assert hasattr(adapter, "send_voice")
+        assert hasattr(adapter, "send_document")
+        assert hasattr(adapter, "send_typing")
+        assert hasattr(adapter, "stop_typing")
+        assert hasattr(adapter, "edit_message")
+        assert hasattr(adapter, "delete_message")
+        assert hasattr(adapter, "format_message")
+
+    def test_telegram_deduplicator_initialization(self):
+        """Test that deduplicator is initialized."""
+        adapter = TelegramAdapter(None)
+
+        assert adapter._deduplicator is not None
+
+    def test_telegram_duplicate_detection(self):
+        """Test message deduplication."""
+        adapter = TelegramAdapter(None)
+
+        # First call should not be duplicate
+        assert not adapter.is_duplicate("msg_123")
+
+        # Second call with same ID should be duplicate
+        assert adapter.is_duplicate("msg_123")
+
+    def test_telegram_send_typing_stub(self):
+        """Test send_typing method exists and can be called."""
+        adapter = TelegramAdapter(None)
+
+        import asyncio
+
+        async def test_typing():
+            # Should not raise even without bot
+            await adapter.send_typing("123")
+
+        asyncio.run(test_typing())
+
+    def test_telegram_stop_typing_stub(self):
+        """Test stop_typing is a no-op."""
+        adapter = TelegramAdapter(None)
+
+        import asyncio
+
+        async def test_stop_typing():
+            # Should not raise
+            await adapter.stop_typing("123")
+
+        asyncio.run(test_stop_typing())
+
+    def test_telegram_format_message_passthrough(self):
+        """Test format_message passes through content."""
+        adapter = TelegramAdapter(None)
+
+        content = "*Bold* and _italic_"
+        formatted = adapter.format_message(content)
+
+        # Telegram formatting handled by parse_mode
+        assert formatted == content
+
+    def test_telegram_parse_mode_support(self):
+        """Test Telegram adapter supports parse_mode in send_message."""
+        adapter = TelegramAdapter(None)
+
+        import asyncio
+
+        async def test_parse_mode():
+            # Method should accept parse_mode
+            try:
+                # Will fail due to no bot, but should accept the parameter
+                await adapter.send_message("123", "test", parse_mode="Markdown")
+            except RuntimeError as e:
+                # Expected error - no bot
+                assert "bot not available" in str(e)
+            except TypeError as e:
+                # Should not get TypeError for unexpected keyword
+                raise AssertionError("parse_mode parameter not accepted")
+
+        asyncio.run(test_parse_mode())
+
+
+# =============================================================================
+# Gateway Helper Tests
+# =============================================================================
+
+class TestGatewayHelpers:
+    """Test gateway helper utilities."""
+
+    def test_message_deduplicator_initialization(self):
+        """Test MessageDeduplicator initialization."""
+        from sediman.gateway.helpers import MessageDeduplicator
+
+        dedup = MessageDeduplicator(max_size=100, ttl_seconds=60)
+
+        assert dedup is not None
+        assert dedup._max_size == 100
+        assert dedup._ttl == 60
+
+    def test_message_deduplicator_basic_functionality(self):
+        """Test basic deduplication functionality."""
+        from sediman.gateway.helpers import MessageDeduplicator
+
+        dedup = MessageDeduplicator()
+
+        # First check should not be duplicate
+        assert not dedup.is_duplicate("msg_1")
+
+        # Second check should be duplicate
+        assert dedup.is_duplicate("msg_1")
+
+        # Different message should not be duplicate
+        assert not dedup.is_duplicate("msg_2")
+
+    def test_message_deduplicator_clear(self):
+        """Test clearing deduplicator."""
+        from sediman.gateway.helpers import MessageDeduplicator
+
+        dedup = MessageDeduplicator()
+
+        dedup.is_duplicate("msg_1")
+        assert dedup.is_duplicate("msg_1")
+
+        dedup.clear()
+
+        # After clear, should not be duplicate
+        assert not dedup.is_duplicate("msg_1")
+
+    def test_strip_markdown_basic(self):
+        """Test basic markdown stripping."""
+        from sediman.gateway.helpers import strip_markdown
+
+        text = "**Bold** and *italic*"
+        stripped = strip_markdown(text)
+
+        assert stripped == "Bold and italic"
+
+    def test_strip_markdown_code_blocks(self):
+        """Test code block removal."""
+        from sediman.gateway.helpers import strip_markdown
+
+        text = "```python\ncode\n``` and text"
+        stripped = strip_markdown(text)
+
+        assert "```" not in stripped
+        assert "and text" in stripped
+
+    def test_strip_markdown_links(self):
+        """Test link stripping."""
+        from sediman.gateway.helpers import strip_markdown
+
+        text = "[link text](https://example.com)"
+        stripped = strip_markdown(text)
+
+        assert stripped == "link text"
+
+    def test_truncate_message_basic(self):
+        """Test basic message truncation."""
+        from sediman.gateway.helpers import truncate_message
+
+        short_text = "Hello!"
+        chunks = truncate_message(short_text, 100)
+
+        assert len(chunks) == 1
+        assert chunks[0] == short_text
+
+    def test_truncate_message_long(self):
+        """Test long message truncation."""
+        from sediman.gateway.helpers import truncate_message
+
+        long_text = "A" * 300
+        chunks = truncate_message(long_text, 100)
+
+        assert len(chunks) == 3
+        assert all(len(chunk) <= 100 for chunk in chunks)
+
+    def test_truncate_message_preserves_code_blocks(self):
+        """Test code block preservation during truncation."""
+        from sediman.gateway.helpers import truncate_message
+
+        text = "```python\n" + "A" * 50 + "\n```\n" + "B" * 50
+        chunks = truncate_message(text, 60)
+
+        # Code block should be preserved
+        assert all("```python" in chunk or "```" not in chunk for chunk in chunks)
+
+
+# =============================================================================
+# Gateway Media Tests
+# =============================================================================
+
+class TestGatewayMedia:
+    """Test gateway media utilities."""
+
+    def test_guess_mime_type_basic(self):
+        """Test basic MIME type guessing."""
+        from sediman.gateway.media import guess_mime_type
+
+        assert guess_mime_type("test.jpg") == "image/jpeg"
+        assert guess_mime_type("test.png") == "image/png"
+        assert guess_mime_type("test.pdf") == "application/pdf"
+        assert guess_mime_type("test.mp4") == "video/mp4"
+
+    def test_is_image(self):
+        """Test image type detection."""
+        from sediman.gateway.media import is_image
+
+        assert is_image("test.jpg") == True
+        assert is_image("test.png") == True
+        assert is_image("test.pdf") == False
+
+    def test_is_video(self):
+        """Test video type detection."""
+        from sediman.gateway.media import is_video
+
+        assert is_video("test.mp4") == True
+        assert is_video("test.webm") == True
+        assert is_video("test.jpg") == False
+
+    def test_is_audio(self):
+        """Test audio type detection."""
+        from sediman.gateway.media import is_audio
+
+        assert is_audio("test.mp3") == True
+        assert is_audio("test.wav") == True
+        assert is_audio("test.jpg") == False
+
+    def test_md5_hex(self):
+        """Test MD5 hashing."""
+        from sediman.gateway.media import md5_hex
+
+        data = b"test data"
+        hash_val = md5_hex(data)
+
+        assert len(hash_val) == 32  # MD5 is 32 hex chars
+        assert isinstance(hash_val, str)
+
+    def test_generate_file_id(self):
+        """Test file ID generation."""
+        from sediman.gateway.media import generate_file_id
+
+        file_id = generate_file_id()
+
+        assert len(file_id) == 32  # 16 bytes = 32 hex chars
+        assert isinstance(file_id, str)
+
+    def test_get_cache_path(self):
+        """Test cache path generation."""
+        from sediman.gateway.media import get_cache_path
+        from pathlib import Path
+
+        path = get_cache_path("abc123", ".jpg")
+
+        # Should have subdirectory based on first 2 chars
+        assert "ab" in str(path)
+        assert path.suffix == ".jpg"
+
+    def test_parse_png_size(self):
+        """Test PNG size parsing."""
+        from sediman.gateway.media import _parse_png_size
+
+        # Valid PNG header
+        png_data = b"\x89PNG\r\n\x1a\n" + b"\x00" * 12 + b"\x00\x00\x00\x01" + b"\x00\x00\x00\x02"
+
+        size = _parse_png_size(png_data)
+
+        assert size is not None
+        assert size["width"] == 1
+        assert size["height"] == 2
+
+    def test_parse_jpeg_size(self):
+        """Test JPEG size parsing."""
+        from sediman.gateway.media import _parse_jpeg_size
+
+        # Minimal JPEG with SOI and SOF0 marker
+        jpeg_data = b"\xFF\xD8\xFF\xC0\x00\x11\x08\x00\x10\x00\x10\x01" + b"\x00" * 10
+
+        size = _parse_jpeg_size(jpeg_data)
+
+        assert size is not None
+        assert size["width"] == 16
+        assert size["height"] == 16
+
+    def test_parse_gif_size(self):
+        """Test GIF size parsing."""
+        from sediman.gateway.media import _parse_gif_size
+
+        # GIF87a header
+        gif_data = b"GIF87a" + b"\x00\x03\x00\x02" + b"\x00" * 3
+
+        size = _parse_gif_size(gif_data)
+
+        assert size is not None
+        assert size["width"] == 3
+        assert size["height"] == 2
