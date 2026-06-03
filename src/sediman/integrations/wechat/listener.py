@@ -12,8 +12,11 @@ from typing import Any
 from pathlib import Path
 
 import aiohttp
+import structlog
 
 from sediman.gateway.events import MessageEvent
+
+logger = structlog.get_logger()
 
 # iLink API constants
 ILINK_BASE_URL = "https://ilinkai.weixin.qq.com"
@@ -167,13 +170,13 @@ class WeChatListener:
 
                 if ret not in {0, None} or errcode not in {0, None}:
                     if ret == SESSION_EXPIRED_ERRCODE or errcode == SESSION_EXPIRED_ERRCODE:
-                        print("WeChat session expired; pausing for 10 minutes")
+                        logger.warning("wechat_session_expired", pause_minutes=10)
                         await asyncio.sleep(600)
                         consecutive_failures = 0
                         continue
 
                     consecutive_failures += 1
-                    print(f"getUpdates failed ret={ret} errcode={errcode} ({consecutive_failures}/{MAX_CONSECUTIVE_FAILURES})")
+                    logger.warning("wechat_getupdates_failed", ret=ret, errcode=errcode, failures=consecutive_failures, max_failures=MAX_CONSECUTIVE_FAILURES)
                     await asyncio.sleep(
                         BACKOFF_DELAY_SECONDS if consecutive_failures >= MAX_CONSECUTIVE_FAILURES else RETRY_DELAY_SECONDS
                     )
@@ -196,7 +199,7 @@ class WeChatListener:
                 break
             except Exception as exc:
                 consecutive_failures += 1
-                print(f"WeChat poll error ({consecutive_failures}/{MAX_CONSECUTIVE_FAILURES}): {exc}")
+                logger.error("wechat_poll_error", error=str(exc), failures=consecutive_failures, max_failures=MAX_CONSECUTIVE_FAILURES)
                 await asyncio.sleep(
                     BACKOFF_DELAY_SECONDS if consecutive_failures >= MAX_CONSECUTIVE_FAILURES else RETRY_DELAY_SECONDS
                 )
@@ -230,7 +233,7 @@ class WeChatListener:
         try:
             await self._process_message(message)
         except Exception as exc:
-            print(f"WeChat message processing error: {exc}")
+            logger.error("wechat_message_error", error=str(exc))
 
     async def _process_message(self, message: dict) -> None:
         """Process incoming WeChat message."""

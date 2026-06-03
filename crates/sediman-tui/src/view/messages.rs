@@ -105,15 +105,17 @@ pub fn render_messages(buf: &mut CellBuffer, area: Rect, app: &mut App) {
     for msg in &app.messages {
         render_message(msg, &mut lines, app, max_width);
     }
-
     // ── Calculate scroll for chat-style rendering ──
     let total_lines = lines.len() as u16;
-    let visible_height = area.height.saturating_sub(2).max(1);
+    let visible_height = area.height;
     let max_scroll = total_lines.saturating_sub(visible_height);
 
-    // Auto-scroll: show latest messages (scroll to bottom)
+    // Auto-scroll: show latest messages (scroll to bottom of view)
+    // scroll_offset = 0 means show newest content at bottom
+    // scroll_offset = max_scroll means show oldest content at bottom
     if app.auto_scroll {
-        app.scroll_offset = max_scroll;
+        app.scroll_offset = 0;
+        app.auto_scroll = false;
     }
     let scroll = app.scroll_offset.min(max_scroll);
 
@@ -125,8 +127,18 @@ pub fn render_messages(buf: &mut CellBuffer, area: Rect, app: &mut App) {
     }
 
     // ── Render lines from bottom up (chat-style) ──
+    // Scroll offset: 0 = newest at bottom, max_scroll = oldest at bottom
+    // To scroll up, we skip the OLDEST lines first (from start of lines)
+    let skip_from_start = if scroll > 0 {
+        // When scrolling up (showing older content), skip from oldest end
+        // The higher scroll_offset, the more we skip from the start
+        scroll.min(total_lines.saturating_sub(visible_height))
+    } else {
+        0
+    };
+
     let mut y = area.bottom().saturating_sub(1);
-    for line in lines.iter().rev().skip(scroll as usize) {
+    for line in lines.iter().skip(skip_from_start as usize).rev() {
         if y < area.y {
             break;
         }
@@ -192,11 +204,10 @@ pub fn render_messages(buf: &mut CellBuffer, area: Rect, app: &mut App) {
 /// Render a single message into the lines buffer
 fn render_message(msg: &ChatMessage, lines: &mut Vec<MessageLine>, app: &App, max_width: usize) {
     match msg {
-        ChatMessage::User { text, task_num, timestamp } => {
-            let ago = format_ago(timestamp.elapsed());
+        ChatMessage::User { text, task_num, timestamp: _ } => {
             lines.push(MessageLine::empty());
             lines.push(MessageLine::text(
-                format!("  ➤ Task #{}  {}", task_num, ago),
+                format!("  ➤ Task #{}", task_num),
                 Style::new().fg(app.theme.secondary).add_modifier(TextAttributes::bold()),
             ));
             push_wrapped(lines, &format!("    {}", text), Style::new().fg(app.theme.text), max_width);
@@ -402,17 +413,6 @@ pub fn format_elapsed(secs: u64) -> String {
         format!("{}m {:02}s", secs / 60, secs % 60)
     } else {
         format!("{}s", secs)
-    }
-}
-
-fn format_ago(duration: std::time::Duration) -> String {
-    let secs = duration.as_secs();
-    if secs < 60 {
-        format!("{}s ago", secs)
-    } else if secs < 3600 {
-        format!("{}m ago", secs / 60)
-    } else {
-        format!("{}h ago", secs / 3600)
     }
 }
 

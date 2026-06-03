@@ -30,7 +30,8 @@ def _capture_exception(exc: Exception) -> None:
         sentry_sdk.capture_exception(exc)
     except Exception:
         logger.debug("sentry_capture_failed")
-from sediman.agent.loop import AgentLoop, AgentResult, StepEvent
+from sediman.agent.loop import AgentLoop
+from sediman.agent.types import AgentResult, StepEvent
 from sediman.browser.session import BrowserSession
 from sediman.config import MAX_TASK_LENGTH
 from sediman.llm.provider import create_provider, LLMProvider
@@ -1225,7 +1226,8 @@ async def serve() -> None:
     # Set up message handler for GatewayRunner
     async def gateway_message_handler(event):
         """Handle messages from integrations via GatewayRunner."""
-        from sediman.agent.loop import AgentLoop, AgentResult
+        from sediman.agent.loop import AgentLoop
+        from sediman.agent.types import AgentResult
         from sediman.gateway.events import MessageEvent
 
         # Get LLM and browser
@@ -1300,6 +1302,11 @@ _INTEGRATION_REGISTRY_NAMES: list[str] = []
 def main() -> None:
     """Entry point: python -m sediman.rpc_server."""
     import sys
+
+    # Setup file-based logging first
+    from sediman.logging import setup_logging
+    log_level = os.environ.get("SEDIMAN_LOG_LEVEL", "INFO")
+    setup_logging(log_level)
 
     provider = os.environ.get("SEDIMAN_PROVIDER", "openai")
     model = os.environ.get("SEDIMAN_MODEL")

@@ -3,15 +3,15 @@
 use crate::app::App;
 use crossterm::event::{KeyCode, KeyModifiers};
 
-/// Scroll up by a specified amount.
+/// Scroll up by a specified amount (show older content).
 fn scroll_up(app: &mut App, amount: u16) {
-    app.scroll_offset = app.scroll_offset.saturating_sub(amount);
+    app.scroll_offset = app.scroll_offset.saturating_add(amount);
     app.auto_scroll = false;
 }
 
-/// Scroll down by a specified amount.
+/// Scroll down by a specified amount (show newer content).
 fn scroll_down(app: &mut App, amount: u16) {
-    app.scroll_offset = app.scroll_offset.saturating_add(amount);
+    app.scroll_offset = app.scroll_offset.saturating_sub(amount);
     app.auto_scroll = false;
 }
 
@@ -133,32 +133,40 @@ pub fn handle_editor_key(app: &mut App, key: crossterm::event::KeyEvent) -> bool
         return true;
     }
 
-    // Up: history up or completion up
+    // Up: history up or scroll up
     if key.code == KeyCode::Up {
-        if key.modifiers.contains(KeyModifiers::SHIFT) {
+        let input = app.editor.lines().join(" ").trim().to_string();
+        // Tab was just used: completion navigation
+        if app.completer.filtered().len() > 1 && input.starts_with('/') && input.len() > 1 {
+            app.completer.up();
+        } else if key.modifiers.contains(KeyModifiers::CONTROL) {
+            // Ctrl+Up: command history up
+            app.editor.history_up();
+        } else if input.is_empty() || key.modifiers.contains(KeyModifiers::SHIFT) {
+            // Empty input or Shift+Up: scroll messages up
             scroll_up(app, 3);
         } else {
-            let input = app.editor.lines().join(" ").trim().to_string();
-            if input.starts_with('/') && !app.completer.filtered().is_empty() {
-                app.completer.up();
-            } else {
-                app.editor.history_up();
-            }
+            // Has command input: history up
+            app.editor.history_up();
         }
         return true;
     }
 
-    // Down: history down or completion down
+    // Down: history down or scroll down
     if key.code == KeyCode::Down {
-        if key.modifiers.contains(KeyModifiers::SHIFT) {
+        let input = app.editor.lines().join(" ").trim().to_string();
+        // Tab was just used: completion navigation
+        if app.completer.filtered().len() > 1 && input.starts_with('/') && input.len() > 1 {
+            app.completer.down();
+        } else if key.modifiers.contains(KeyModifiers::CONTROL) {
+            // Ctrl+Down: command history down
+            app.editor.history_down();
+        } else if input.is_empty() || key.modifiers.contains(KeyModifiers::SHIFT) {
+            // Empty input or Shift+Down: scroll messages down
             scroll_down(app, 3);
         } else {
-            let input = app.editor.lines().join(" ").trim().to_string();
-            if input.starts_with('/') && !app.completer.filtered().is_empty() {
-                app.completer.down();
-            } else {
-                app.editor.history_down();
-            }
+            // Has command input: history down
+            app.editor.history_down();
         }
         return true;
     }

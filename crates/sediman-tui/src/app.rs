@@ -50,6 +50,8 @@ pub enum AppModal {
     SessionBrowser,
     ThemePicker,
     CoderPicker,
+    SearchModePicker,
+    BrowserModePicker,
     Doctor {
         checks: Vec<DoctorCheck>,
         cursor: usize,
@@ -151,6 +153,7 @@ pub struct App {
 
     pub agent_mode: AgentMode,
     pub coder_backend: String, // "internal", "claude-code", "codex", "opencode"
+    pub search_mode: String, // "auto", "simple", "advanced"
 
     pub messages: Vec<ChatMessage>,
     pub scroll_offset: u16,
@@ -207,6 +210,10 @@ pub struct App {
     pub theme_picker_saved_name: String,
     // Coder picker state
     pub coder_picker_selected: usize,
+    // Search mode picker state
+    pub search_mode_picker_selected: usize,
+    // Browser mode picker state
+    pub browser_mode_picker_selected: usize,
     // Session browser state
     pub session_list: Vec<sediman_tui_bridge::SessionInfo>,
     pub session_selected: usize,
@@ -340,6 +347,7 @@ impl App {
 
             agent_mode: AgentMode::Manager,
             coder_backend: "internal".into(),
+            search_mode: "auto".into(),
 
             messages: Vec::new(),
             scroll_offset: 0,
@@ -388,6 +396,8 @@ impl App {
             theme_picker_saved_theme: Theme::default(),
             theme_picker_saved_name: String::new(),
             coder_picker_selected: 0,
+            search_mode_picker_selected: 0,
+            browser_mode_picker_selected: 0,
             session_list: Vec::new(),
             session_selected: 0,
             session_scroll: 0,
@@ -769,6 +779,7 @@ pub async fn run(
         },
         headless: app.headless,
         coder_backend: app.coder_backend.clone(),
+        search_mode: app.search_mode.clone(),
     };
     if let Err(e) = config.save() {
         eprintln!("Warning: {}", e);

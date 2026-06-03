@@ -21,9 +21,9 @@ Usage:
     # Search retrieves with chain tracing
     results = strategy.search("user preferences")
     for result in results:
-        print(f"Current: {result.record.content}")
+        logger.info("memory_result", content=result.record.content)
         if result.has_evolution_history():
-            print(f"History: {[r.content for r in result.chain]}")
+            logger.info("memory_history", chain=[r.content for r in result.chain])
 """
 
 from sediman.memory.hy.models import (

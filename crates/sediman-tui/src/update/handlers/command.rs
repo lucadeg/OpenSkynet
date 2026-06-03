@@ -62,6 +62,9 @@ pub async fn handle_slash(app: &mut App, input: &str) {
         "coder" => {
             crate::commands::coder::handle_coder(app, rest).await;
         }
+        "search" => {
+            crate::commands::search::handle_search(app, rest).await;
+        }
         "plan" => {
             crate::commands::plan::handle_plan(app, rest).await;
         }

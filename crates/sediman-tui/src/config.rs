@@ -33,6 +33,10 @@ pub struct TuiConfig {
     /// Coder backend: "internal", "claude-code", "codex", "opencode"
     #[serde(default = "default_coder_backend")]
     pub coder_backend: String,
+
+    /// Search mode: "auto", "simple", "advanced"
+    #[serde(default = "default_search_mode")]
+    pub search_mode: String,
 }
 
 fn default_theme() -> String { "default".into() }
@@ -40,6 +44,7 @@ fn default_permission() -> String { "ask".into() }
 fn default_side_tab() -> String { "Status".into() }
 fn default_headless() -> bool { true }
 fn default_coder_backend() -> String { "internal".into() }
+fn default_search_mode() -> String { "auto".into() }
 
 impl Default for TuiConfig {
     fn default() -> Self {
@@ -50,6 +55,7 @@ impl Default for TuiConfig {
             side_panel_tab: default_side_tab(),
             headless: default_headless(),
             coder_backend: default_coder_backend(),
+            search_mode: default_search_mode(),
         }
     }
 }
@@ -113,6 +119,7 @@ mod tests {
             side_panel_tab: "Skills".into(),
             headless: false,
             coder_backend: "internal".into(),
+            search_mode: "auto".into(),
         };
         let toml_str = toml::to_string_pretty(&config).unwrap();
         let parsed: TuiConfig = toml::from_str(&toml_str).unwrap();
