@@ -45,6 +45,18 @@ pub struct TuiConfig {
     /// Last update check timestamp (ISO 8601 string)
     #[serde(default)]
     pub last_update_check: Option<String>,
+
+    /// Active provider name (openai, anthropic, minimax, etc.)
+    #[serde(default = "default_provider")]
+    pub provider: String,
+
+    /// Active model name (gpt-4, claude-3-opus, etc.)
+    #[serde(default)]
+    pub model: Option<String>,
+
+    /// Custom base URL for provider (if using custom endpoint)
+    #[serde(default)]
+    pub base_url: Option<String>,
 }
 
 fn default_theme() -> String { "default".into() }
@@ -54,6 +66,7 @@ fn default_headless() -> bool { true }
 fn default_coder_backend() -> String { "internal".into() }
 fn default_search_mode() -> String { "auto".into() }
 pub fn default_update_frequency() -> String { "daily".into() }
+fn default_provider() -> String { "anthropic".into() }
 
 impl Default for TuiConfig {
     fn default() -> Self {
@@ -67,6 +80,9 @@ impl Default for TuiConfig {
             search_mode: default_search_mode(),
             update_frequency: default_update_frequency(),
             last_update_check: None,
+            provider: default_provider(),
+            model: None,
+            base_url: None,
         }
     }
 }
@@ -133,6 +149,9 @@ mod tests {
             search_mode: "auto".into(),
             update_frequency: "weekly".into(),
             last_update_check: Some("2024-01-01T00:00:00Z".into()),
+            provider: "minimax".into(),
+            model: Some("m3".into()),
+            base_url: None,
         };
         let toml_str = toml::to_string_pretty(&config).unwrap();
         let parsed: TuiConfig = toml::from_str(&toml_str).unwrap();
@@ -141,6 +160,8 @@ mod tests {
         assert!(parsed.side_panel_open);
         assert_eq!(parsed.side_panel_tab, "Skills");
         assert!(!parsed.headless);
+        assert_eq!(parsed.provider, "minimax");
+        assert_eq!(parsed.model, Some("m3".into()));
     }
 
     #[test]

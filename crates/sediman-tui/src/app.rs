@@ -792,6 +792,9 @@ pub async fn run(
         search_mode: app.search_mode.clone(),
         update_frequency: crate::config::default_update_frequency(),
         last_update_check: None,
+        provider: app.provider.clone(),
+        model: app.model.clone(),
+        base_url: app.base_url.clone(),
     };
     if let Err(e) = config.save() {
         eprintln!("Warning: {}", e);

@@ -344,10 +344,19 @@ async fn main() {
     let saved_config = crate::config::TuiConfig::load();
     let headless = if args.headless { true } else { saved_config.headless };
 
+    // Use saved provider/model if not specified via CLI args
+    let provider = if args.provider == "openai" && !saved_config.provider.is_empty() {
+        saved_config.provider.clone()
+    } else {
+        args.provider
+    };
+    let model = args.model.or_else(|| saved_config.model.clone());
+    let base_url = args.base_url.or_else(|| saved_config.base_url.clone());
+
     // Spawn background update check if enabled (must be before any fields are moved)
     spawn_update_check_if_due(&saved_config);
 
-    let mut app_state = app::App::new(args.provider, args.model, args.base_url, headless, bridge);
+    let mut app_state = app::App::new(provider, model, base_url, headless, bridge);
 
     // Fetch available providers from the Python backend
     match app_state.bridge.list_providers().await {
