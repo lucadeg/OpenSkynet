@@ -1,6 +1,6 @@
 //! Non-modal key handling for the TUI (editor, navigation, search).
 
-use crate::app::App;
+use crate::app::{App, ChatMessage};
 use crossterm::event::{KeyCode, KeyModifiers};
 
 /// Scroll up by a specified amount (show older content).
@@ -100,7 +100,10 @@ pub fn handle_editor_key(app: &mut App, key: crossterm::event::KeyEvent) -> bool
         if is_empty && !app.editor.is_searching() {
             if app.agent_running {
                 // Toggle inline sections during streaming: thinking → steps → reset
-                if !app.streaming_thinking.is_empty() && !app.steps_expanded {
+                let has_thinking = app.messages.last()
+                    .map(|m| matches!(m, ChatMessage::Agent { thinking_text, .. } if !thinking_text.is_empty()))
+                    .unwrap_or(false);
+                if has_thinking && !app.steps_expanded {
                     app.toggle_steps_expanded();
                 } else if app.thinking_expanded && app.steps_expanded {
                     app.toggle_thinking_expanded();
@@ -174,7 +177,7 @@ pub fn handle_editor_key(app: &mut App, key: crossterm::event::KeyEvent) -> bool
                     }
                 }
             }
-            app.agent_mode = app.agent_mode.cycle();
+            app.cycle_agent_mode();
         }
         return true;
     }
@@ -328,7 +331,6 @@ fn complete_file_path(app: &mut App, word: &str) -> bool {
 #[cfg(test)]
 mod file_complete_tests {
     use super::*;
-    use crate::app::App;
     use sediman_tui_bridge::ApiClient;
 
     fn make_app() -> App {

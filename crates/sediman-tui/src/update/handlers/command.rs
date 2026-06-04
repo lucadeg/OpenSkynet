@@ -20,7 +20,6 @@ pub async fn handle_slash(app: &mut App, input: &str) {
         }
         "reset" => {
             app.messages.clear();
-            app.step_log.clear();
             app.agent_running = false;
             app.add_system_message("Reset complete.".into());
         }

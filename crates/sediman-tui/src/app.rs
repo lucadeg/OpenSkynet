@@ -23,7 +23,6 @@ use crate::update::handle_message;
 
 const SPINNER_FRAMES: &[char] = &['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 
-const STEP_LOG_CAP: usize = 200;
 const AGENT_STEPS_CAP: usize = 500;
 const FRAME_INTERVAL_MS: u64 = 33;
 const HEALTH_CHECK_INTERVAL_TICKS: u64 = 90;
@@ -193,20 +192,18 @@ pub struct App {
     pub agent_start: Instant,
     pub spinner_text: String,
     pub spinner_frame: usize,
-    pub step_log: Vec<String>,
     pub last_result: Option<sediman_tui_bridge::AgentResult>,
     pub show_banner: bool,
     pub show_side_panel: bool,
     pub side_panel_tab: SideTab,
-    pub streaming_thinking: String,
-    pub streaming_response: String,
-    pub streaming_execution: String,
     pub streaming_phase: String,
     pub scroll_paused: bool,
     pub thinking_expanded: bool,
     pub steps_expanded: bool,
 
     pub agent_mode: AgentMode,
+    pub agent_modes: Vec<AgentModeEntry>,
+    pub current_mode_index: usize,
     pub coder_backend: String, // "internal", "claude-code", "codex", "opencode"
     pub search_mode: String, // "auto", "simple", "advanced"
 
@@ -290,6 +287,7 @@ pub enum ChatMessage {
         task_num: usize,
     },
         Agent {
+        state: MessageState,
         steps: Vec<String>,
         thinking_text: String,
         result: Option<String>,
@@ -310,12 +308,27 @@ pub enum ChatMessage {
     },
 }
 
+#[derive(Clone, Copy, PartialEq, Debug, Serialize, Deserialize)]
+pub enum MessageState {
+    Streaming,
+    Completed,
+}
+
 #[derive(Clone, Copy, PartialEq)]
 pub enum SideTab {
     Skills,
     Memory,
     Schedule,
     Status,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct AgentModeEntry {
+    pub mode: String,
+    pub label: String,
+    pub runner: String,
+    pub description: String,
+    pub capabilities: Vec<String>,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -344,6 +357,39 @@ impl AgentMode {
             AgentMode::Terminator => "Term",
         }
     }
+}
+
+pub fn default_agent_modes() -> Vec<AgentModeEntry> {
+    vec![
+        AgentModeEntry {
+            mode: "manager".into(),
+            label: "Mgr".into(),
+            runner: "default".into(),
+            description: "General-purpose agent".into(),
+            capabilities: vec![],
+        },
+        AgentModeEntry {
+            mode: "browser".into(),
+            label: "Brow".into(),
+            runner: "browser".into(),
+            description: "Web browsing agent".into(),
+            capabilities: vec!["browser".into()],
+        },
+        AgentModeEntry {
+            mode: "coder".into(),
+            label: "Code".into(),
+            runner: "coding".into(),
+            description: "Coding agent".into(),
+            capabilities: vec!["fileops".into(), "terminal".into()],
+        },
+        AgentModeEntry {
+            mode: "terminator".into(),
+            label: "Term".into(),
+            runner: "orchestrator".into(),
+            description: "Autonomous multi-task agent".into(),
+            capabilities: vec!["fileops".into(), "terminal".into(), "browser".into()],
+        },
+    ]
 }
 
 impl App {
@@ -391,20 +437,18 @@ impl App {
             agent_start: Instant::now(),
             spinner_text: String::new(),
             spinner_frame: 0,
-            step_log: Vec::new(),
             last_result: None,
             show_banner: true,
             show_side_panel: false,
             side_panel_tab: SideTab::Status,
-            streaming_thinking: String::new(),
-            streaming_response: String::new(),
-            streaming_execution: String::new(),
             streaming_phase: String::new(),
             scroll_paused: false,
             thinking_expanded: true,
             steps_expanded: false,
 
             agent_mode: AgentMode::Manager,
+            agent_modes: default_agent_modes(),
+            current_mode_index: 0,
             coder_backend: "internal".into(),
             search_mode: "auto".into(),
 
@@ -487,6 +531,51 @@ impl App {
         self.render_version = self.render_version.wrapping_add(1);
     }
 
+    pub fn cycle_agent_mode(&mut self) {
+        if self.agent_modes.is_empty() {
+            return;
+        }
+        self.current_mode_index = (self.current_mode_index + 1) % self.agent_modes.len();
+        self.sync_agent_mode();
+    }
+
+    pub fn sync_agent_mode(&mut self) {
+        if let Some(entry) = self.agent_modes.get(self.current_mode_index) {
+            self.agent_mode = match entry.mode.as_str() {
+                "browser" => AgentMode::Browser,
+                "coder" => AgentMode::Coder,
+                "terminator" => AgentMode::Terminator,
+                _ => AgentMode::Manager,
+            };
+        }
+    }
+
+    pub fn current_mode_label(&self) -> &str {
+        self.agent_modes
+            .get(self.current_mode_index)
+            .map(|e| e.label.as_str())
+            .unwrap_or("Mgr")
+    }
+
+    pub fn current_mode_name(&self) -> &str {
+        self.agent_modes
+            .get(self.current_mode_index)
+            .map(|e| e.mode.as_str())
+            .unwrap_or("manager")
+    }
+
+    pub fn set_agent_modes(&mut self, modes: Vec<AgentModeEntry>) {
+        let old_mode = self.current_mode_name().to_string();
+        self.agent_modes = if modes.is_empty() {
+            default_agent_modes()
+        } else {
+            modes
+        };
+        let new_idx = self.agent_modes.iter().position(|e| e.mode == old_mode).unwrap_or(0);
+        self.current_mode_index = new_idx;
+        self.sync_agent_mode();
+    }
+
     pub fn invalidate_markdown_cache(&mut self) {
         for msg in &mut self.messages {
             if let ChatMessage::Agent { cached_response_md, .. } = msg {
@@ -513,12 +602,7 @@ impl App {
         self.mark_dirty();
     }
 
-    pub fn start_agent_message(&mut self, task: &str) {
-        self.step_log.clear();
-        self.step_log.push(format!("Task: {}", task));
-        self.streaming_thinking.clear();
-        self.streaming_response.clear();
-        self.streaming_execution.clear();
+    pub fn start_agent_message(&mut self, _task: &str) {
         self.streaming_phase.clear();
         self.scroll_paused = false;
         self.thinking_expanded = true;
@@ -533,6 +617,7 @@ impl App {
         }
 
         self.messages.push(ChatMessage::Agent {
+            state: MessageState::Streaming,
             steps: Vec::new(),
             thinking_text: String::new(),
             result: None,
@@ -549,11 +634,6 @@ impl App {
     }
 
     pub fn append_step(&mut self, step: String) {
-        self.step_log.push(step.clone());
-        if self.step_log.len() > STEP_LOG_CAP {
-            let excess = self.step_log.len() - STEP_LOG_CAP;
-            self.step_log.drain(0..excess);
-        }
         if let Some(ChatMessage::Agent { steps, selected_tab, tab_expanded, .. }) = self.messages.last_mut() {
             let is_first_step = steps.is_empty();
             steps.push(step);
@@ -583,7 +663,7 @@ impl App {
         } else {
             None
         };
-        if let Some(ChatMessage::Agent { result, success: s, elapsed_secs: e, skill_created: sc, scheduled_job: sj, selected_tab, tab_expanded, cached_response_md, .. }) = self.messages.last_mut() {
+        if let Some(ChatMessage::Agent { result, success: s, elapsed_secs: e, skill_created: sc, scheduled_job: sj, selected_tab, tab_expanded, cached_response_md, state, .. }) = self.messages.last_mut() {
             *result = Some(result_text);
             *s = success;
             *e = elapsed_secs;
@@ -592,11 +672,9 @@ impl App {
             *selected_tab = AgentTab::Response;
             *tab_expanded = true;
             *cached_response_md = md_lines;
+            *state = MessageState::Completed;
         }
         self.agent_running = false;
-        self.streaming_thinking.clear();
-        self.streaming_response.clear();
-        self.streaming_execution.clear();
         self.streaming_phase.clear();
         self.auto_scroll = true;
         self.mark_dirty();
@@ -637,22 +715,15 @@ impl App {
 
         let phase_lower = phase.to_lowercase();
         let is_thinking = phase_lower == "thinking" || phase_lower == "planning";
-        let is_executing = phase_lower == "executing" || phase_lower == "observing";
 
-        // Strip residual think tags that may have escaped the Python-side parser
         let cleaned = Self::strip_think_tags(token);
 
-        if is_thinking {
-            Self::truncate_streaming(&mut self.streaming_thinking, &cleaned);
-        } else if is_executing {
-            Self::truncate_streaming(&mut self.streaming_execution, &cleaned);
-        } else {
-            Self::truncate_streaming(&mut self.streaming_response, &cleaned);
-        }
-
-        if is_thinking {
-            if let Some(ChatMessage::Agent { thinking_text, .. }) = self.messages.last_mut() {
-                thinking_text.push_str(&cleaned);
+        if let Some(ChatMessage::Agent { thinking_text, result, .. }) = self.messages.last_mut() {
+            if is_thinking {
+                Self::truncate_streaming(thinking_text, &cleaned);
+            } else {
+                let buf = result.get_or_insert_with(String::new);
+                Self::truncate_streaming(buf, &cleaned);
             }
         }
 
@@ -1142,9 +1213,14 @@ mod tests {
     #[test]
     fn test_start_agent_message_clears_step_log() {
         let mut app = test_app();
-        app.step_log.push("old step".into());
+        app.start_agent_message("old task");
+        app.append_step("old step".into());
         app.start_agent_message("new task");
-        assert!(app.step_log.starts_with(&["Task: new task".to_string()]));
+        let steps = match app.messages.last().unwrap() {
+            ChatMessage::Agent { steps, .. } => steps,
+            _ => panic!("Expected Agent"),
+        };
+        assert!(steps.is_empty());
     }
 
     #[test]
@@ -1161,13 +1237,17 @@ mod tests {
     }
 
     #[test]
-    fn test_append_step_truncates_at_200_keeps_newest() {
+    fn test_append_step_truncates_at_cap_keeps_newest() {
         let mut app = test_app();
         app.start_agent_message("task");
-        for i in 0..210 { app.append_step(format!("step {}", i)); }
-        assert_eq!(app.step_log.len(), 200);
-        assert!(app.step_log.first().unwrap().contains("step 10"));
-        assert!(app.step_log.last().unwrap().contains("step 209"));
+        for i in 0..600 { app.append_step(format!("step {}", i)); }
+        let steps = match app.messages.last().unwrap() {
+            ChatMessage::Agent { steps, .. } => steps,
+            _ => panic!("Expected Agent"),
+        };
+        assert_eq!(steps.len(), AGENT_STEPS_CAP as usize);
+        assert!(steps.first().unwrap().contains("step 100"));
+        assert!(steps.last().unwrap().contains("step 599"));
     }
 
     #[test]
@@ -1234,12 +1314,15 @@ mod tests {
     #[test]
     fn test_start_agent_clears_old_steps() {
         let mut app = test_app();
-        app.step_log.push("old step".into());
-        app.step_log.push("another old".into());
+        app.start_agent_message("old task");
+        app.append_step("old step".into());
+        app.append_step("another old".into());
         app.start_agent_message("test task");
-        assert_eq!(app.step_log.len(), 1);
-        assert!(app.step_log[0].contains("Task: test task"));
-        assert!(!app.step_log.iter().any(|s| s == "old step"));
+        let steps = match app.messages.last().unwrap() {
+            ChatMessage::Agent { steps, .. } => steps,
+            _ => panic!("Expected Agent"),
+        };
+        assert_eq!(steps.len(), 0);
     }
 
     #[test]
@@ -1383,7 +1466,6 @@ mod comprehensive_app_tests {
 
     #[test]
     fn test_step_log_capacity_limit() {
-        assert_eq!(STEP_LOG_CAP, 200);
         assert_eq!(AGENT_STEPS_CAP, 500);
     }
 
@@ -1449,7 +1531,11 @@ mod new_feature_tests {
         for _ in 0..200 {
             app.append_streaming_token("x".repeat(600).as_str(), "thinking");
         }
-        assert!(app.streaming_thinking.len() <= STREAMING_MAX_BYTES + 1000);
+        let thinking = match app.messages.last().unwrap() {
+            ChatMessage::Agent { thinking_text, .. } => thinking_text,
+            _ => panic!("Expected Agent"),
+        };
+        assert!(thinking.len() <= STREAMING_MAX_BYTES + 1000);
     }
 
     #[test]
@@ -1459,14 +1545,23 @@ mod new_feature_tests {
         for _ in 0..200 {
             app.append_streaming_token("y".repeat(600).as_str(), "responding");
         }
-        assert!(app.streaming_response.len() <= STREAMING_MAX_BYTES + 1000);
+        let result = match app.messages.last().unwrap() {
+            ChatMessage::Agent { result, .. } => result,
+            _ => panic!("Expected Agent"),
+        };
+        assert!(result.as_ref().unwrap().len() <= STREAMING_MAX_BYTES + 1000);
     }
 
     #[test]
     fn test_streaming_small_token_not_capped() {
         let mut app = make_app();
+        app.start_agent_message("task");
         app.append_streaming_token("hello", "responding");
-        assert_eq!(app.streaming_response, "hello");
+        let result = match app.messages.last().unwrap() {
+            ChatMessage::Agent { result, .. } => result,
+            _ => panic!("Expected Agent"),
+        };
+        assert_eq!(result.as_deref(), Some("hello"));
     }
 
     // ── markdown cache ──────────────────────────────────────────
@@ -1558,8 +1653,12 @@ mod new_feature_tests {
         let mut app = make_app();
         app.start_agent_message("task");
         app.append_streaming_token("think", "thinking");
-        assert!(!app.streaming_thinking.is_empty());
-        assert!(app.streaming_response.is_empty());
+        let (thinking_text, result) = match app.messages.last().unwrap() {
+            ChatMessage::Agent { thinking_text, result, .. } => (thinking_text, result),
+            _ => panic!("Expected Agent"),
+        };
+        assert!(!thinking_text.is_empty());
+        assert!(result.is_none());
     }
 
     #[test]
@@ -1567,8 +1666,12 @@ mod new_feature_tests {
         let mut app = make_app();
         app.start_agent_message("task");
         app.append_streaming_token("respond", "responding");
-        assert!(!app.streaming_response.is_empty());
-        assert!(app.streaming_thinking.is_empty());
+        let (thinking_text, result) = match app.messages.last().unwrap() {
+            ChatMessage::Agent { thinking_text, result, .. } => (thinking_text, result),
+            _ => panic!("Expected Agent"),
+        };
+        assert!(!result.as_ref().unwrap().is_empty());
+        assert!(thinking_text.is_empty());
     }
 
     #[test]
@@ -1576,8 +1679,12 @@ mod new_feature_tests {
         let mut app = make_app();
         app.start_agent_message("task");
         app.append_streaming_token("exec", "executing");
-        assert!(!app.streaming_execution.is_empty());
-        assert!(app.streaming_thinking.is_empty());
+        let (thinking_text, result) = match app.messages.last().unwrap() {
+            ChatMessage::Agent { thinking_text, result, .. } => (thinking_text, result),
+            _ => panic!("Expected Agent"),
+        };
+        assert!(!result.as_ref().unwrap().is_empty());
+        assert!(thinking_text.is_empty());
     }
 
     #[test]
@@ -1631,17 +1738,20 @@ mod new_feature_tests {
     #[test]
     fn test_start_agent_resets_streaming_state() {
         let mut app = make_app();
-        app.streaming_thinking = "old".into();
-        app.streaming_response = "old".into();
-        app.streaming_execution = "old".into();
+        app.start_agent_message("old task");
+        app.append_streaming_token("old think", "thinking");
+        app.append_streaming_token("old response", "responding");
         app.streaming_phase = "thinking".into();
         app.thinking_expanded = false;
         app.steps_expanded = true;
         app.scroll_paused = true;
         app.start_agent_message("new task");
-        assert!(app.streaming_thinking.is_empty());
-        assert!(app.streaming_response.is_empty());
-        assert!(app.streaming_execution.is_empty());
+        let (thinking_text, result) = match app.messages.last().unwrap() {
+            ChatMessage::Agent { thinking_text, result, .. } => (thinking_text, result),
+            _ => panic!("Expected Agent"),
+        };
+        assert!(thinking_text.is_empty());
+        assert!(result.is_none());
         assert!(app.streaming_phase.is_empty());
         assert!(app.thinking_expanded);
         assert!(!app.steps_expanded);
@@ -1700,6 +1810,7 @@ mod new_feature_tests {
     #[test]
     fn test_chat_message_serialize_deserialize_agent() {
         let msg = ChatMessage::Agent {
+            state: MessageState::Completed,
             steps: vec!["s1".into(), "s2".into()],
             thinking_text: "think".into(),
             result: Some("done".into()),

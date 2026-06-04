@@ -12,7 +12,7 @@ use sediman_tui_core::renderer::{CellBuffer, Color, Line, Rect, Style, TextAttri
 use sediman_tui_core::markdown;
 use unicode_width::UnicodeWidthChar;
 
-use crate::app::{App, ChatMessage, AgentTab};
+use crate::app::{App, ChatMessage, AgentTab, MessageState};
 
 thread_local! {
     static LINE_CACHE: RefCell<(u64, u16, u16, Vec<MessageLine>)> = RefCell::new((0, 0, 0, Vec::new()));
@@ -45,9 +45,10 @@ pub fn render_messages(buf: &mut CellBuffer, area: Rect, app: &mut App) {
             render_streaming_sections(&mut new_lines, app, max_width, area);
         }
 
-        let skip_last = app.agent_running && !app.messages.is_empty();
-        let end = app.messages.len().saturating_sub(if skip_last { 1 } else { 0 });
-        for msg in app.messages.iter().take(end) {
+        for msg in &app.messages {
+            if matches!(msg, ChatMessage::Agent { state: MessageState::Streaming, .. }) {
+                continue;
+            }
             render_completed_message(msg, &mut new_lines, app, max_width);
         }
 
@@ -79,8 +80,16 @@ fn render_streaming_sections(lines: &mut Vec<MessageLine>, app: &mut App, max_wi
     let spinner = app.spinner_char();
     let elapsed = app.agent_start.elapsed().as_secs();
     let elapsed_str = format_elapsed(elapsed);
-    let step_count = app.step_log.len().saturating_sub(1);
-    let last_step = app.step_log.last()
+
+    let (steps, thinking_text, response_text) = match app.messages.last() {
+        Some(ChatMessage::Agent { steps, thinking_text, result, .. }) => {
+            (steps, thinking_text, result.as_deref().unwrap_or(""))
+        }
+        _ => return,
+    };
+
+    let step_count = steps.len();
+    let last_step = steps.last()
         .map(|s| truncate_end(s, max_width.saturating_sub(18)))
         .unwrap_or_else(|| "Starting...".into());
 
@@ -95,17 +104,16 @@ fn render_streaming_sections(lines: &mut Vec<MessageLine>, app: &mut App, max_wi
     ));
     lines.push(MessageLine::empty());
 
-    let has_thinking = !app.streaming_thinking.is_empty();
-    let has_response = !app.streaming_response.is_empty();
-    let has_execution = !app.streaming_execution.is_empty();
-    let has_steps = app.step_log.len() > 1;
+    let has_thinking = !thinking_text.is_empty();
+    let has_response = !response_text.is_empty();
+    let has_steps = !steps.is_empty();
     let is_thinking_phase = app.streaming_phase == "thinking" || app.streaming_phase == "planning";
 
     if has_thinking || has_steps {
         if has_thinking {
             render_inline_section(
                 lines, app, max_width,
-                "\u{25c6}", "Thinking", &app.streaming_thinking,
+                "\u{25c6}", "Thinking", thinking_text,
                 app.theme.warning, app.theme.text_muted,
                 app.thinking_expanded, is_thinking_phase, 10,
             );
@@ -115,30 +123,18 @@ fn render_streaming_sections(lines: &mut Vec<MessageLine>, app: &mut App, max_wi
         }
 
         if has_steps {
-            render_inline_steps(lines, app, max_width);
-            if has_response || has_execution {
+            render_inline_steps(lines, app, steps, max_width);
+            if has_response {
                 lines.push(MessageLine::empty());
             }
         }
     }
 
-    if has_response || has_execution {
+    if has_response {
         let is_response_phase = !is_thinking_phase && app.streaming_phase != "executing";
-        let combined = if has_response && has_execution {
-            format!("{}\n{}", app.streaming_execution, app.streaming_response)
-        } else if has_response {
-            app.streaming_response.clone()
-        } else {
-            app.streaming_execution.clone()
-        };
-        let phase_label = if has_response && has_execution || has_execution {
-            "Output"
-        } else {
-            "Response"
-        };
         render_inline_section(
             lines, app, max_width,
-            "\u{25b6}", phase_label, &combined,
+            "\u{25b6}", "Response", response_text,
             app.theme.info, app.theme.text,
             true, is_response_phase, 0,
         );
@@ -203,8 +199,8 @@ fn render_inline_section(
     }
 }
 
-fn render_inline_steps(lines: &mut Vec<MessageLine>, app: &App, max_width: usize) {
-    let step_count = app.step_log.len().saturating_sub(1);
+fn render_inline_steps(lines: &mut Vec<MessageLine>, app: &App, steps: &[String], max_width: usize) {
+    let step_count = steps.len();
     let expand_icon = if app.steps_expanded { "\u{25bc}" } else { "\u{25b6}" };
     lines.push(MessageLine::text(
         format!("  \u{25b8} Steps ({}) {}", step_count, expand_icon),
@@ -213,7 +209,7 @@ fn render_inline_steps(lines: &mut Vec<MessageLine>, app: &App, max_width: usize
 
     if !app.steps_expanded {
         if step_count > 0 {
-            let last = app.step_log.last().map(|s| truncate_end(s, max_width.saturating_sub(4))).unwrap_or_default();
+            let last = steps.last().map(|s| truncate_end(s, max_width.saturating_sub(4))).unwrap_or_default();
             lines.push(MessageLine::text(
                 format!("    {}", last),
                 Style::new().fg(app.theme.text_muted),
@@ -223,11 +219,11 @@ fn render_inline_steps(lines: &mut Vec<MessageLine>, app: &App, max_width: usize
     }
 
     let max_show = 5usize;
-    let total = app.step_log.len();
+    let total = steps.len();
     let show: Vec<&String> = if total > max_show {
-        app.step_log.iter().rev().take(max_show).collect::<Vec<_>>().into_iter().rev().collect()
+        steps.iter().rev().take(max_show).collect::<Vec<_>>().into_iter().rev().collect()
     } else {
-        app.step_log.iter().collect()
+        steps.iter().collect()
     };
 
     if total > max_show {
@@ -260,7 +256,7 @@ fn render_completed_message(
         ChatMessage::Agent {
             steps, thinking_text, result, success, elapsed_secs,
             skill_created, scheduled_job, selected_tab, tab_expanded,
-            cached_response_md,
+            cached_response_md, ..
         } => {
             lines.push(MessageLine::empty());
 
@@ -1031,9 +1027,7 @@ mod tests {
     
         #[test]
         fn test_inline_section_expanded_shows_content() {
-            let mut app = make_app();
-            app.streaming_response = "hello world".into();
-            app.streaming_phase = "responding".into();
+            let app = make_app();
             let mut lines = Vec::new();
             render_inline_section(
                 &mut lines, &app, 80,
@@ -1123,24 +1117,37 @@ mod tests {
         #[test]
         fn test_inline_steps_shows_count() {
             let mut app = make_app();
-            app.step_log = vec!["Task: test".into(), "step 1".into(), "step 2".into()];
+            app.start_agent_message("test");
+            app.append_step("Task: test".into());
+            app.append_step("step 1".into());
+            app.append_step("step 2".into());
             app.steps_expanded = true;
+            let steps = match app.messages.last().unwrap() {
+                ChatMessage::Agent { steps, .. } => steps.clone(),
+                _ => panic!("Expected Agent"),
+            };
             let mut lines = Vec::new();
-            render_inline_steps(&mut lines, &app, 80);
+            render_inline_steps(&mut lines, &app, &steps, 80);
             let has_count = lines.iter().any(|l| match l {
-                MessageLine::Text { text, .. } => text.contains("Steps (2)"),
+                MessageLine::Text { text, .. } => text.contains("Steps (3)"),
                 _ => false,
             });
             assert!(has_count);
         }
-    
+
         #[test]
         fn test_inline_steps_collapsed_shows_last() {
             let mut app = make_app();
-            app.step_log = vec!["Task: test".into(), "planning read code".into()];
+            app.start_agent_message("test");
+            app.append_step("Task: test".into());
+            app.append_step("planning read code".into());
             app.steps_expanded = false;
+            let steps = match app.messages.last().unwrap() {
+                ChatMessage::Agent { steps, .. } => steps.clone(),
+                _ => panic!("Expected Agent"),
+            };
             let mut lines = Vec::new();
-            render_inline_steps(&mut lines, &app, 80);
+            render_inline_steps(&mut lines, &app, &steps, 80);
             let has_last = lines.iter().any(|l| match l {
                 MessageLine::Text { text, .. } => text.contains("planning"),
                 _ => false,
@@ -1190,6 +1197,7 @@ mod tests {
         fn test_render_agent_message_with_tabs() {
             let mut app = make_app();
             app.messages.push(ChatMessage::Agent {
+                state: MessageState::Completed,
                 steps: vec!["planning analyze".into(), "executing run".into()],
                 thinking_text: "thinking content".into(),
                 result: Some("done".into()),
@@ -1223,6 +1231,7 @@ mod tests {
         fn test_render_agent_thinking_tab() {
             let mut app = make_app();
             app.messages.push(ChatMessage::Agent {
+                state: MessageState::Completed,
                 steps: vec![],
                 thinking_text: "deep reasoning".into(),
                 result: None,
@@ -1246,6 +1255,7 @@ mod tests {
         fn test_render_agent_steps_tab() {
             let mut app = make_app();
             app.messages.push(ChatMessage::Agent {
+                state: MessageState::Completed,
                 steps: vec!["executing read_file config.toml".into()],
                 thinking_text: String::new(),
                 result: None,
@@ -1269,6 +1279,7 @@ mod tests {
         fn test_render_agent_skill_created() {
             let mut app = make_app();
             app.messages.push(ChatMessage::Agent {
+                state: MessageState::Completed,
                 steps: vec![],
                 thinking_text: String::new(),
                 result: None,
@@ -1292,6 +1303,7 @@ mod tests {
         fn test_render_agent_collapsed() {
             let mut app = make_app();
             app.messages.push(ChatMessage::Agent {
+                state: MessageState::Completed,
                 steps: vec![],
                 thinking_text: "thinking content".into(),
                 result: Some("result".into()),
@@ -1316,6 +1328,7 @@ mod tests {
             let mut app = make_app();
             let lines = sediman_tui_core::markdown::render_markdown_with_theme("# Test", &app.theme);
             app.messages.push(ChatMessage::Agent {
+                state: MessageState::Completed,
                 steps: vec![],
                 thinking_text: String::new(),
                 result: Some("# Test".into()),
@@ -1338,16 +1351,16 @@ mod tests {
             let mut app = make_app();
             app.agent_running = true;
             app.agent_start = std::time::Instant::now();
-            app.streaming_thinking = "thinking...".into();
-            app.streaming_response = "responding...".into();
-            app.streaming_phase = "responding".into();
+            app.start_agent_message("test");
+            app.append_streaming_token("thinking...", "thinking");
+            app.append_streaming_token("responding...", "responding");
             app.thinking_expanded = true;
             app.steps_expanded = true;
-            app.step_log = vec!["Task: test".into(), "planning".into()];
-    
+            app.append_step("planning".into());
+
             let mut lines = Vec::new();
             render_streaming_sections(&mut lines, &mut app, 80, Rect::new(0, 0, 80, 24));
-    
+
             let has_thinking = lines.iter().any(|l| match l {
                 MessageLine::Text { text, .. } => text.contains("thinking..."),
                 _ => false,
@@ -1358,6 +1371,33 @@ mod tests {
             });
             assert!(has_thinking, "Should contain thinking content");
             assert!(has_responding, "Should contain response content");
+        }
+
+        // ── render_messages integration: no duplicate thinking ────────
+
+        #[test]
+        fn test_render_messages_during_streaming_no_duplicate_sections() {
+            let mut app = make_app();
+            app.agent_running = true;
+            app.agent_start = std::time::Instant::now();
+            app.start_agent_message("test");
+            app.append_streaming_token("thinking...", "thinking");
+            app.append_streaming_token("responding...", "responding");
+            app.thinking_expanded = true;
+            app.steps_expanded = true;
+            app.append_step("planning".into());
+
+            let mut buf = CellBuffer::new(80, 40);
+            let area = Rect::new(0, 0, 80, 40);
+            render_messages(&mut buf, area, &mut app);
+
+            // Assert ◆ Thinking appears exactly once (not twice from
+            // the inline streaming section AND the completed message tab bar).
+            let thinking_icon_count = buf.iter_cells()
+                .filter(|(_x, _y, cell)| cell.ch == '\u{25c6}')
+                .count();
+            assert_eq!(thinking_icon_count, 1,
+                "\u{25c6} Thinking icon should appear exactly once, found {} times", thinking_icon_count);
         }
     
         // ── parse_tool_action tests ──────────────────────────────────

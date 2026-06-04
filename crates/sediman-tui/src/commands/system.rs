@@ -8,14 +8,12 @@ pub async fn handle_help(app: &mut App, _args: &str) {
 #[allow(dead_code)]
 pub async fn handle_clear(app: &mut App, _args: &str) {
     app.messages.clear();
-    app.step_log.clear();
     app.add_system_message("Conversation cleared.".into());
 }
 
 #[allow(dead_code)]
 pub async fn handle_reset(app: &mut App, _args: &str) {
     app.messages.clear();
-    app.step_log.clear();
     app.task_count = 0;
     app.last_result = None;
     app.editor = sediman_tui_core::input::TextEditor::new();
@@ -27,7 +25,6 @@ pub async fn handle_reset(app: &mut App, _args: &str) {
 #[allow(dead_code)]
 pub async fn handle_compress(app: &mut App, _args: &str) {
     app.add_system_message("Compressing conversation...".into());
-    app.step_log.drain(..app.step_log.len().saturating_sub(50));
     let keep_count = 20;
     if app.messages.len() > keep_count {
         let drain_count = app.messages.len() - keep_count;

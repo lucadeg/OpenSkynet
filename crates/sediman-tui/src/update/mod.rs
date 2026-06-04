@@ -350,8 +350,12 @@ mod dispatcher_tests {
         app.start_agent_message("task");
         let tx = make_event_tx();
         handle_message(&mut app, AppEvent::AgentStep("executing".into(), "run cmd".into()), &tx).await;
-        assert_eq!(app.step_log.len(), 2);
-        assert!(app.step_log[1].contains("run cmd"));
+        let steps = match app.messages.last().unwrap() {
+            ChatMessage::Agent { steps, .. } => steps,
+            _ => panic!("Expected Agent"),
+        };
+        assert_eq!(steps.len(), 1);
+        assert!(steps[0].contains("run cmd"));
     }
 
     #[tokio::test]
@@ -361,7 +365,11 @@ mod dispatcher_tests {
         app.start_agent_message("task");
         let tx = make_event_tx();
         handle_message(&mut app, AppEvent::AgentStep("executing".into(), "run cmd".into()), &tx).await;
-        assert_eq!(app.step_log.len(), 1);
+        let steps = match app.messages.last().unwrap() {
+            ChatMessage::Agent { steps, .. } => steps,
+            _ => panic!("Expected Agent"),
+        };
+        assert_eq!(steps.len(), 0);
     }
 
     #[tokio::test]
@@ -412,7 +420,11 @@ mod dispatcher_tests {
         app.start_agent_message("task");
         let tx = make_event_tx();
         handle_message(&mut app, AppEvent::StreamingToken("hello".into(), "responding".into()), &tx).await;
-        assert!(!app.streaming_response.is_empty());
+        let result = match app.messages.last().unwrap() {
+            ChatMessage::Agent { result, .. } => result,
+            _ => panic!("Expected Agent"),
+        };
+        assert!(result.as_ref().unwrap().is_empty() == false);
     }
 
     #[tokio::test]
@@ -422,7 +434,11 @@ mod dispatcher_tests {
         app.start_agent_message("task");
         let tx = make_event_tx();
         handle_message(&mut app, AppEvent::StreamingToken("hello".into(), "responding".into()), &tx).await;
-        assert!(app.streaming_response.is_empty());
+        let result = match app.messages.last().unwrap() {
+            ChatMessage::Agent { result, .. } => result,
+            _ => panic!("Expected Agent"),
+        };
+        assert!(result.is_none());
     }
 
     #[tokio::test]
