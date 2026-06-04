@@ -1137,14 +1137,16 @@ pub async fn run(
                             });
                         }
                     } else if !was_connected && app.is_connected {
+                        let was_reconnecting = app.reconnecting;
                         app.reconnecting = false;
                         // Populate providers on first successful backend connection
                         if app.available_providers.is_empty() {
                             if let Ok(providers) = app.bridge.list_providers().await {
                                 app.available_providers = providers;
+                                app.mark_dirty();
                             }
                         }
-                        if app.reconnecting {
+                        if was_reconnecting {
                             app.add_system_message("Backend reconnected.".into());
                         } else {
                             app.add_system_message("Backend connected.".into());
