@@ -12,6 +12,8 @@ import asyncio
 if TYPE_CHECKING:
     from sediman.llm.provider import LLMProvider
 
+from sediman.agent.streaming.think_parser import StreamingThinkParser
+
 
 class StreamingHandler:
     """Handles streaming text output and conversational responses."""
@@ -23,9 +25,22 @@ class StreamingHandler:
     ):
         self.llm = llm_provider
         self.on_streaming_text = on_streaming_text
+        self._think_parser: StreamingThinkParser | None = None
+
+    def _get_think_parser(self) -> StreamingThinkParser:
+        if self._think_parser is None:
+            self._think_parser = StreamingThinkParser(on_streaming_text=self.on_streaming_text)
+        return self._think_parser
+
+    def reset_think_parser(self) -> None:
+        if self._think_parser is not None:
+            self._think_parser.reset()
 
     def stream_text(self, token: str, phase: str = "responding") -> None:
         """Stream a text token to the callback.
+
+        Routes through the real-time think tag parser so that
+        <think>...</think> content is separated into the correct phase.
 
         Args:
             token: The text token to stream
@@ -35,7 +50,8 @@ class StreamingHandler:
             return
 
         try:
-            self.on_streaming_text(token, phase)
+            parser = self._get_think_parser()
+            parser.feed_token(token, phase)
         except Exception:
             import structlog
             structlog.get_logger().debug("stream_text_callback_failed")

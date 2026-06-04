@@ -153,7 +153,8 @@ fn detect_platform() -> &'static str {
         target_os = "windows"
     )))]
     {
-        panic!("Unsupported platform for auto-update");
+        tracing::warn!("Unsupported platform for auto-update");
+        return "";
     }
 }
 

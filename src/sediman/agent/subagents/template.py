@@ -22,9 +22,17 @@ class AgentTemplate:
     system_prompt: str = ""
     max_iterations: int = 5
     source_path: Path | None = None
+    label: str = ""
+    runner: str = ""
+    capabilities: list[str] = field(default_factory=list)
+    runner_class: str | None = None
+
+    @property
+    def is_top_level(self) -> bool:
+        return self.mode == "top-level"
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        d = {
             "name": self.name,
             "description": self.description,
             "mode": self.mode,
@@ -32,6 +40,15 @@ class AgentTemplate:
             "permissions": dict(self.permissions),
             "max_iterations": self.max_iterations,
         }
+        if self.label:
+            d["label"] = self.label
+        if self.runner:
+            d["runner"] = self.runner
+        if self.capabilities:
+            d["capabilities"] = list(self.capabilities)
+        if self.runner_class:
+            d["runner_class"] = self.runner_class
+        return d
 
 
 _FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---\s*\n(.*)$", re.DOTALL)
@@ -131,6 +148,10 @@ def parse_agent_file(path: Path) -> AgentTemplate | None:
         system_prompt=body,
         max_iterations=int(data.get("max_iterations", 5)),
         source_path=path,
+        label=data.get("label", ""),
+        runner=data.get("runner", ""),
+        capabilities=data.get("capabilities", []) if isinstance(data.get("capabilities"), list) else [],
+        runner_class=data.get("runner_class") or None,
     )
     return template
 
@@ -144,10 +165,18 @@ def render_agent_file(template: AgentTemplate) -> str:
     lines.append(f'mode: "{template.mode}"')
     if template.model:
         lines.append(f'model: "{template.model}"')
+    if template.label:
+        lines.append(f'label: "{template.label}"')
+    if template.runner:
+        lines.append(f'runner: "{template.runner}"')
+    if template.runner_class:
+        lines.append(f'runner_class: "{template.runner_class}"')
     if template.permissions:
         lines.append("permissions:")
         for k, v in template.permissions.items():
             lines.append(f"  {k}: {v}")
+    if template.capabilities:
+        lines.append(f"capabilities: [{', '.join(template.capabilities)}]")
     lines.append(f"max_iterations: {template.max_iterations}")
     lines.append("---")
     lines.append("")

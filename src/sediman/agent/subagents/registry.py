@@ -11,6 +11,7 @@ from sediman.config import AGENTS_DIR as USER_DIR, SAFE_NAME_RE
 logger = structlog.get_logger()
 
 BUILTIN_DIR = Path(__file__).parent / "builtin"
+TOP_LEVEL_DIR = Path(__file__).parent / "top_level"
 
 
 def _validate_safe_name(name: str) -> None:
@@ -25,11 +26,14 @@ class SubagentRegistry:
         self,
         builtin_dir: Path | None = None,
         user_dir: Path | None = None,
+        top_level_dir: Path | None = None,
     ):
         self._builtin_dir = builtin_dir or BUILTIN_DIR
         self._user_dir = user_dir or USER_DIR
+        self._top_level_dir = top_level_dir or TOP_LEVEL_DIR
         self._templates: dict[str, AgentTemplate] = {}
         self._load_builtin()
+        self._load_top_level()
         self._load_user()
 
     def _load_builtin(self) -> None:
@@ -51,6 +55,15 @@ class SubagentRegistry:
                 # User agents override built-ins by name
                 self._templates[template.name] = template
                 logger.debug("user_agent_loaded", name=template.name, path=str(path))
+
+    def _load_top_level(self) -> None:
+        if not self._top_level_dir.exists():
+            return
+        for path in sorted(self._top_level_dir.glob("*.md")):
+            template = parse_agent_file(path)
+            if template:
+                self._templates[template.name] = template
+                logger.debug("top_level_agent_loaded", name=template.name)
 
     def get(self, name: str) -> AgentTemplate | None:
         return self._templates.get(name)
@@ -93,6 +106,7 @@ class SubagentRegistry:
         """Reload all templates from disk."""
         self._templates.clear()
         self._load_builtin()
+        self._load_top_level()
         self._load_user()
         logger.info("registry_reloaded", count=len(self._templates))
 

@@ -45,7 +45,7 @@ pub async fn handle_message(app: &mut App, event: AppEvent, event_tx: &mpsc::Unb
             }
 
             // Modal key handling
-            if app.active_modal.is_some() && handle_modal_key(app, key).await {
+            if app.active_modal.is_some() && handle_modal_key(app, key, event_tx).await {
                 return;
             }
 
@@ -65,7 +65,7 @@ pub async fn handle_message(app: &mut App, event: AppEvent, event_tx: &mpsc::Unb
                     } else if let Some(cmd) = input.strip_prefix('!') {
                         handle_shell(app, cmd).await;
                     } else if app.agent_running {
-                        app.add_system_message("Agent is busy. Queued.".into());
+                        app.add_system_message("Agent is busy. Please wait.".into());
                     } else {
                         handle_task(app, &input, event_tx).await;
                     }
@@ -118,9 +118,7 @@ pub async fn handle_message(app: &mut App, event: AppEvent, event_tx: &mpsc::Unb
                 app.append_step(action);
             }
         }
-        AppEvent::AgentResult(success, result_text, elapsed_secs) => {
-            let skill_created = None;
-            let scheduled_job = None;
+        AppEvent::AgentResult(success, result_text, elapsed_secs, skill_created, scheduled_job) => {
             app.complete_agent_message(success, result_text, elapsed_secs, skill_created, scheduled_job);
             if elapsed_secs >= 30 {
                 let status = if success { "Completed" } else { "Failed" };
@@ -144,11 +142,32 @@ pub async fn handle_message(app: &mut App, event: AppEvent, event_tx: &mpsc::Unb
                 app.append_streaming_token(&token, &phase);
             }
         }
+        AppEvent::UpdateSuccess => {
+            app.show_toast("Update installed! Restarting...".to_string());
+            app.running = false;
+        }
+        AppEvent::UpdateFailed(err) => {
+            app.show_toast(format!("Update failed: {}", err));
+            app.active_modal = None;
+        }
+        AppEvent::UpdateAvailable { version, release_notes, current_version } => {
+            app.active_modal = Some(crate::app::AppModal::UpdateAvailable {
+                version,
+                release_notes,
+                current_version,
+                selected: 0,
+                show_notes: false,
+                notes_scroll: 0,
+                installing: false,
+                install_progress: String::new(),
+            });
+            app.mark_dirty();
+        }
     }
 }
 
 /// Handle modal key input.
-async fn handle_modal_key(app: &mut App, key: crossterm::event::KeyEvent) -> bool {
+async fn handle_modal_key(app: &mut App, key: crossterm::event::KeyEvent, event_tx: &mpsc::UnboundedSender<AppEvent>) -> bool {
     match &app.active_modal {
         Some(AppModal::ModelPicker) => handle_model_picker(app, key).await,
         Some(AppModal::ProviderPicker) => handle_provider_picker(app, key).await,
@@ -168,7 +187,8 @@ async fn handle_modal_key(app: &mut App, key: crossterm::event::KeyEvent) -> boo
         Some(AppModal::Doctor { .. }) => handle_doctor(app, key).await,
         Some(AppModal::Help { .. }) => handle_help_modal(app, key).await,
         Some(AppModal::Info { .. }) => handle_info_modal(app, key).await,
-        Some(AppModal::UpdateAvailable { .. }) => handle_update_available_modal(app, key).await,
+        Some(AppModal::UpdateAvailable { .. }) => handle_update_available_modal(app, key, event_tx).await,
+        Some(AppModal::OnboardingWizard { .. }) => handle_onboarding(app, key).await,
         None => false,
     }
 }
@@ -185,12 +205,14 @@ async fn handle_shell(app: &mut App, cmd: &str) {
 
 /// Handle key input for the update available modal.
 #[allow(clippy::zombie_processes)]
-async fn handle_update_available_modal(app: &mut App, key: crossterm::event::KeyEvent) -> bool {
+async fn handle_update_available_modal(app: &mut App, key: crossterm::event::KeyEvent, event_tx: &mpsc::UnboundedSender<AppEvent>) -> bool {
     use crossterm::event::KeyCode;
 
     let modal = app.active_modal.clone();
     if let Some(AppModal::UpdateAvailable {
         version,
+        release_notes,
+        current_version,
         selected,
         show_notes,
         notes_scroll,
@@ -223,22 +245,16 @@ async fn handle_update_available_modal(app: &mut App, key: crossterm::event::Key
                             install_progress: "Downloading update...".to_string(),
                         });
 
-                        let app_ref = unsafe { &mut *(app as *const _ as *mut App) };
+                        let tx = event_tx.clone();
                         let version_clone = version.clone();
 
                         tokio::spawn(async move {
                             match crate::updater::install_update(&version_clone).await {
                                 Ok(()) => {
-                                    app_ref.show_toast("Update installed! Restarting...".to_string());
-                                    tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-                                    // Restart the application
-                                    let _ = std::process::Command::new(
-                                        std::env::current_exe().unwrap()
-                                    ).spawn().expect("Failed to restart");
+                                    let _ = tx.send(AppEvent::UpdateSuccess);
                                 }
                                 Err(e) => {
-                                    app_ref.show_toast(format!("Update failed: {}", e));
-                                    app_ref.active_modal = None;
+                                    let _ = tx.send(AppEvent::UpdateFailed(e.to_string()));
                                 }
                             }
                         });
@@ -247,12 +263,12 @@ async fn handle_update_available_modal(app: &mut App, key: crossterm::event::Key
                         // Skip - close modal
                         app.active_modal = None;
                     }
-                    2 => {
+                     2 => {
                         // View Release Notes - toggle notes display
                         app.active_modal = Some(AppModal::UpdateAvailable {
                             version,
-                            release_notes: String::new(),
-                            current_version: String::new(),
+                            release_notes: release_notes.clone(),
+                            current_version: current_version.clone(),
                             selected,
                             show_notes: !show_notes,
                             notes_scroll,
@@ -272,8 +288,8 @@ async fn handle_update_available_modal(app: &mut App, key: crossterm::event::Key
                 if let Some(AppModal::UpdateAvailable { version, .. }) = &app.active_modal {
                     app.active_modal = Some(AppModal::UpdateAvailable {
                         version: version.clone(),
-                        release_notes: String::new(),
-                        current_version: String::new(),
+                        release_notes: release_notes.clone(),
+                        current_version: current_version.clone(),
                         selected: new_selected,
                         show_notes,
                         notes_scroll,
@@ -293,8 +309,8 @@ async fn handle_update_available_modal(app: &mut App, key: crossterm::event::Key
                 if let Some(AppModal::UpdateAvailable { version, .. }) = &app.active_modal {
                     app.active_modal = Some(AppModal::UpdateAvailable {
                         version: version.clone(),
-                        release_notes: String::new(),
-                        current_version: String::new(),
+                        release_notes: release_notes.clone(),
+                        current_version: current_version.clone(),
                         selected,
                         show_notes,
                         notes_scroll: new_scroll,
@@ -308,5 +324,232 @@ async fn handle_update_available_modal(app: &mut App, key: crossterm::event::Key
         }
     } else {
         false
+    }
+}
+
+#[cfg(test)]
+mod dispatcher_tests {
+    use super::*;
+    use crate::app::{App, ChatMessage};
+    use sediman_tui_bridge::ApiClient;
+    use sediman_tui_core::event::AppEvent;
+    use crossterm::event::{KeyCode, KeyModifiers, KeyEvent};
+
+    fn make_app() -> App {
+        App::new("test".into(), Some("gpt-4".into()), None, true, ApiClient::new("/tmp/test.sock"))
+    }
+
+    fn make_event_tx() -> mpsc::UnboundedSender<AppEvent> {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        tx
+    }
+
+    #[tokio::test]
+    async fn test_agent_step_appends_to_running_agent() {
+        let mut app = make_app();
+        app.agent_running = true;
+        app.start_agent_message("task");
+        let tx = make_event_tx();
+        handle_message(&mut app, AppEvent::AgentStep("executing".into(), "run cmd".into()), &tx).await;
+        let steps = match app.messages.last().unwrap() {
+            ChatMessage::Agent { steps, .. } => steps,
+            _ => panic!("Expected Agent"),
+        };
+        assert_eq!(steps.len(), 1);
+        assert!(steps[0].contains("run cmd"));
+    }
+
+    #[tokio::test]
+    async fn test_agent_step_ignored_when_agent_not_running() {
+        let mut app = make_app();
+        app.agent_running = false;
+        app.start_agent_message("task");
+        let tx = make_event_tx();
+        handle_message(&mut app, AppEvent::AgentStep("executing".into(), "run cmd".into()), &tx).await;
+        let steps = match app.messages.last().unwrap() {
+            ChatMessage::Agent { steps, .. } => steps,
+            _ => panic!("Expected Agent"),
+        };
+        assert_eq!(steps.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_agent_result_completes_message() {
+        let mut app = make_app();
+        app.agent_running = true;
+        app.start_agent_message("task");
+        let tx = make_event_tx();
+        handle_message(&mut app, AppEvent::AgentResult(true, "done".into(), 5, None, None), &tx).await;
+        assert!(!app.agent_running);
+        let msg = app.messages.last().unwrap();
+        match msg {
+            ChatMessage::Agent { result, success, .. } => {
+                assert_eq!(result.as_deref(), Some("done"));
+                assert!(*success);
+            }
+            _ => panic!("Expected Agent"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_agent_error_stops_agent() {
+        let mut app = make_app();
+        app.agent_running = true;
+        let tx = make_event_tx();
+        handle_message(&mut app, AppEvent::AgentError("fail".into()), &tx).await;
+        assert!(!app.agent_running);
+        let msg = app.messages.last().unwrap();
+        match msg {
+            ChatMessage::Error { text } => assert!(text.contains("fail")),
+            _ => panic!("Expected Error message"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_agent_done_stops_agent() {
+        let mut app = make_app();
+        app.agent_running = true;
+        let tx = make_event_tx();
+        handle_message(&mut app, AppEvent::AgentDone, &tx).await;
+        assert!(!app.agent_running);
+    }
+
+    #[tokio::test]
+    async fn test_streaming_token_appended_to_running_agent() {
+        let mut app = make_app();
+        app.agent_running = true;
+        app.start_agent_message("task");
+        let tx = make_event_tx();
+        handle_message(&mut app, AppEvent::StreamingToken("hello".into(), "responding".into()), &tx).await;
+        let result = match app.messages.last().unwrap() {
+            ChatMessage::Agent { result, .. } => result,
+            _ => panic!("Expected Agent"),
+        };
+        assert!(result.as_ref().unwrap().is_empty() == false);
+    }
+
+    #[tokio::test]
+    async fn test_streaming_token_ignored_when_agent_stopped() {
+        let mut app = make_app();
+        app.agent_running = false;
+        app.start_agent_message("task");
+        let tx = make_event_tx();
+        handle_message(&mut app, AppEvent::StreamingToken("hello".into(), "responding".into()), &tx).await;
+        let result = match app.messages.last().unwrap() {
+            ChatMessage::Agent { result, .. } => result,
+            _ => panic!("Expected Agent"),
+        };
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_command_output_adds_system_message() {
+        let mut app = make_app();
+        let tx = make_event_tx();
+        let before = app.messages.len();
+        handle_message(&mut app, AppEvent::CommandOutput("info".into()), &tx).await;
+        assert_eq!(app.messages.len(), before + 1);
+    }
+
+    #[tokio::test]
+    async fn test_shutdown_sets_running_false() {
+        let mut app = make_app();
+        app.running = true;
+        let tx = make_event_tx();
+        handle_message(&mut app, AppEvent::Shutdown, &tx).await;
+        assert!(!app.running);
+    }
+
+    #[tokio::test]
+    async fn test_update_success_sets_running_false() {
+        let mut app = make_app();
+        let tx = make_event_tx();
+        handle_message(&mut app, AppEvent::UpdateSuccess, &tx).await;
+        assert!(!app.running);
+    }
+
+    #[tokio::test]
+    async fn test_update_failed_closes_modal() {
+        let mut app = make_app();
+        app.active_modal = Some(crate::app::AppModal::Help { scroll: 0 });
+        let tx = make_event_tx();
+        handle_message(&mut app, AppEvent::UpdateFailed("error".into()), &tx).await;
+        assert!(app.active_modal.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_update_available_opens_modal() {
+        let mut app = make_app();
+        let tx = make_event_tx();
+        handle_message(&mut app, AppEvent::UpdateAvailable {
+            version: "1.0".into(),
+            release_notes: "notes".into(),
+            current_version: "0.9".into(),
+        }, &tx).await;
+        assert!(app.active_modal.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_tick_advances_spinner_when_running() {
+        let mut app = make_app();
+        app.agent_running = true;
+        let before = app.spinner_char();
+        let tx = make_event_tx();
+        handle_message(&mut app, AppEvent::Tick, &tx).await;
+        assert_ne!(app.spinner_char(), before);
+    }
+
+    #[tokio::test]
+    async fn test_resize_queues_pending() {
+        let mut app = make_app();
+        let tx = make_event_tx();
+        handle_message(&mut app, AppEvent::Resize(100, 40), &tx).await;
+        assert_eq!(app.pending_resize, Some((100, 40)));
+    }
+
+    #[tokio::test]
+    async fn test_paste_into_editor() {
+        let mut app = make_app();
+        let tx = make_event_tx();
+        handle_message(&mut app, AppEvent::Paste("pasted text".into()), &tx).await;
+        let text = app.editor.lines().join(" ");
+        assert!(text.contains("pasted text"));
+    }
+
+    #[tokio::test]
+    async fn test_paste_multiline_shows_bracket() {
+        let mut app = make_app();
+        let tx = make_event_tx();
+        handle_message(&mut app, AppEvent::Paste("line1\nline2\nline3".into()), &tx).await;
+        let text = app.editor.lines().join(" ");
+        assert!(text.contains("paste 3 lines") || text.contains("line1"), "Should handle multiline paste");
+    }
+
+    #[tokio::test]
+    async fn test_enter_submits_slash_command() {
+        let mut app = make_app();
+        app.editor.insert_str("/help");
+        let tx = make_event_tx();
+        let key = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
+        handle_message(&mut app, AppEvent::Key(key), &tx).await;
+        let text = app.editor.lines().join(" ");
+        assert!(text.is_empty(), "Editor should be cleared after /command");
+    }
+
+    #[tokio::test]
+    async fn test_enter_busy_agent_shows_wait() {
+        let mut app = make_app();
+        app.agent_running = true;
+        app.editor.insert_str("do something");
+        let tx = make_event_tx();
+        let key = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
+        let before = app.messages.len();
+        handle_message(&mut app, AppEvent::Key(key), &tx).await;
+        assert!(app.messages.len() > before);
+        let last = app.messages.last().unwrap();
+        match last {
+            ChatMessage::System { text } => assert!(text.contains("Please wait")),
+            _ => panic!("Expected System message"),
+        }
     }
 }

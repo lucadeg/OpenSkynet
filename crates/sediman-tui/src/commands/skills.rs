@@ -247,6 +247,8 @@ pub async fn handle_run_skill(app: &mut App, args: &str) {
                     success,
                     agent_result.result.clone(),
                     agent_result.elapsed_secs,
+                    None,
+                    None,
                 ));
             }
             Err(e) => {

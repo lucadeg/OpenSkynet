@@ -34,7 +34,9 @@ pub async fn handle_browser_mode_picker(app: &mut App, key: crossterm::event::Ke
                 app.headless = *mode == "headless";
                 let new_mode = if app.headless { "headless" } else { "headed" };
                 if old_mode != new_mode {
-                    // Persist
+                    if let Err(e) = app.bridge.browser_configure(app.headless).await {
+                        app.add_error_message(format!("Failed to configure browser: {}", e));
+                    }
                     let config = crate::config::TuiConfig::load();
                     let mut config = config;
                     config.headless = app.headless;

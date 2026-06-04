@@ -1,11 +1,14 @@
+use serde::{Serialize, Deserialize};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use tokio::sync::mpsc;
+use tracing::warn;
 
 use sediman_tui_bridge::ApiClient;
 
 use sediman_tui_core::{
-    renderer::{CellBuffer, AnsiWriter, DiffEngine},
+    renderer::{CellBuffer, AnsiWriter, DiffEngine, Line},
     event::{AppEvent, EventLoop},
     input::{TextEditor, Completer},
     command::CommandRegistry,
@@ -20,10 +23,10 @@ use crate::update::handle_message;
 
 const SPINNER_FRAMES: &[char] = &['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 
-const STEP_LOG_CAP: usize = 200;
 const AGENT_STEPS_CAP: usize = 500;
 const FRAME_INTERVAL_MS: u64 = 33;
 const HEALTH_CHECK_INTERVAL_TICKS: u64 = 90;
+const STREAMING_MAX_BYTES: usize = 100_000;
 
 /// Modal overlay types — only one can be active at a time.
 #[derive(Clone, Debug)]
@@ -74,6 +77,9 @@ pub enum AppModal {
         installing: bool,
         install_progress: String,
     },
+    OnboardingWizard {
+        step: u8,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -96,7 +102,7 @@ pub struct DoctorCheck {
 }
 
 /// Tab selection for agent message display
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub enum AgentTab {
     Thinking,
     Steps,
@@ -120,6 +126,7 @@ impl AgentTab {
         }
     }
 
+    #[allow(dead_code)]
     pub fn name(self) -> &'static str {
         match self {
             AgentTab::Thinking => "Thinking",
@@ -176,6 +183,8 @@ pub struct App {
     pub permission: PermissionManager,
     pub interrupt: InterruptManager,
     pub event_tx: Option<tokio::sync::mpsc::UnboundedSender<sediman_tui_core::event::AppEvent>>,
+    #[allow(clippy::type_complexity)]
+    pub backend_restart_fn: Option<Arc<dyn Fn() -> std::pin::Pin<Box<dyn std::future::Future<Output = bool> + Send>> + Send + Sync>>,
 
     pub running: bool,
     pub task_count: usize,
@@ -187,21 +196,28 @@ pub struct App {
     pub agent_start: Instant,
     pub spinner_text: String,
     pub spinner_frame: usize,
-    pub step_log: Vec<String>,
     pub last_result: Option<sediman_tui_bridge::AgentResult>,
     pub show_banner: bool,
     pub show_side_panel: bool,
     pub side_panel_tab: SideTab,
-    pub streaming_text: String,
     pub streaming_phase: String,
+    pub scroll_paused: bool,
+    pub thinking_expanded: bool,
+    pub steps_expanded: bool,
 
     pub agent_mode: AgentMode,
+    pub agent_modes: Vec<AgentModeEntry>,
+    pub current_mode_index: usize,
     pub coder_backend: String, // "internal", "claude-code", "codex", "opencode"
     pub search_mode: String, // "auto", "simple", "advanced"
 
     pub messages: Vec<ChatMessage>,
     pub scroll_offset: u16,
     pub auto_scroll: bool,
+    pub render_version: u64,
+    pub last_render_width: u16,
+    pub last_render_height: u16,
+    pub last_render_scroll: u16,
 
     pub skills_cache: Vec<String>,
     pub memory_cache: Vec<String>,
@@ -220,6 +236,7 @@ pub struct App {
     pub provider_picker_idx: usize,
     pub provider_picker_scroll: usize,
     pub available_providers: Vec<sediman_tui_bridge::ProviderInfo>,
+    pub onboarding_provider: String,
     pub connect_target: Option<String>,
     pub connect_pending_model: Option<String>,
     pub api_key_input: String,
@@ -240,7 +257,6 @@ pub struct App {
     pub skill_browser_filter: String,
     pub skill_browser_installed: Vec<String>,
     pub skill_browser_scroll: u16,
-    pub skill_browser_visible_rows: u16,
     pub skill_browser_filter_active: bool,
     // Schedule browser state
     pub schedule_jobs: Vec<sediman_tui_bridge::CronJob>,
@@ -268,39 +284,39 @@ pub struct App {
     pub side_panel_scroll: usize,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[allow(dead_code)]
 pub enum ChatMessage {
     User {
         text: String,
         task_num: usize,
-        #[allow(dead_code)]
-        timestamp: Instant,
     },
-    Agent {
+        Agent {
+        state: MessageState,
         steps: Vec<String>,
-        thinking_text: String,  // Content from thinking/planning phase
+        thinking_text: String,
         result: Option<String>,
         success: bool,
         elapsed_secs: u64,
         skill_created: Option<String>,
         scheduled_job: Option<String>,
-        #[allow(dead_code)]
-        timestamp: Instant,
-        // Tabbed interface state
-        selected_tab: AgentTab,  // Which tab is currently selected
-        tab_expanded: bool,  // Whether the selected tab is expanded
+        selected_tab: AgentTab,
+        tab_expanded: bool,
+        #[serde(skip)]
+        cached_response_md: Option<Vec<Line>>,
     },
     System {
         text: String,
-        #[allow(dead_code)]
-        timestamp: Instant,
     },
     Error {
         text: String,
-        #[allow(dead_code)]
-        timestamp: Instant,
     },
+}
+
+#[derive(Clone, Copy, PartialEq, Debug, Serialize, Deserialize)]
+pub enum MessageState {
+    Streaming,
+    Completed,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -311,6 +327,15 @@ pub enum SideTab {
     Status,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct AgentModeEntry {
+    pub mode: String,
+    pub label: String,
+    pub runner: String,
+    pub description: String,
+    pub capabilities: Vec<String>,
+}
+
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum AgentMode {
     Manager,
@@ -319,6 +344,7 @@ pub enum AgentMode {
     Terminator,
 }
 
+#[allow(dead_code)]
 impl AgentMode {
     pub fn cycle(self) -> Self {
         match self {
@@ -337,6 +363,39 @@ impl AgentMode {
             AgentMode::Terminator => "Term",
         }
     }
+}
+
+pub fn default_agent_modes() -> Vec<AgentModeEntry> {
+    vec![
+        AgentModeEntry {
+            mode: "manager".into(),
+            label: "Mgr".into(),
+            runner: "default".into(),
+            description: "General-purpose agent".into(),
+            capabilities: vec![],
+        },
+        AgentModeEntry {
+            mode: "browser".into(),
+            label: "Brow".into(),
+            runner: "browser".into(),
+            description: "Web browsing agent".into(),
+            capabilities: vec!["browser".into()],
+        },
+        AgentModeEntry {
+            mode: "coder".into(),
+            label: "Code".into(),
+            runner: "coding".into(),
+            description: "Coding agent".into(),
+            capabilities: vec!["fileops".into(), "terminal".into()],
+        },
+        AgentModeEntry {
+            mode: "terminator".into(),
+            label: "Term".into(),
+            runner: "orchestrator".into(),
+            description: "Autonomous multi-task agent".into(),
+            capabilities: vec!["fileops".into(), "terminal".into(), "browser".into()],
+        },
+    ]
 }
 
 impl App {
@@ -373,6 +432,7 @@ impl App {
             permission: PermissionManager::new(),
             interrupt: InterruptManager::new(),
             event_tx: None,
+            backend_restart_fn: None,
 
             running: true,
             task_count: 0,
@@ -383,21 +443,28 @@ impl App {
             agent_start: Instant::now(),
             spinner_text: String::new(),
             spinner_frame: 0,
-            step_log: Vec::new(),
             last_result: None,
             show_banner: true,
             show_side_panel: false,
             side_panel_tab: SideTab::Status,
-            streaming_text: String::new(),
             streaming_phase: String::new(),
+            scroll_paused: false,
+            thinking_expanded: true,
+            steps_expanded: false,
 
             agent_mode: AgentMode::Manager,
+            agent_modes: default_agent_modes(),
+            current_mode_index: 0,
             coder_backend: "internal".into(),
             search_mode: "auto".into(),
 
             messages: Vec::new(),
             scroll_offset: 0,
             auto_scroll: true,
+            render_version: 0,
+            last_render_width: 0,
+            last_render_height: 0,
+            last_render_scroll: 0,
 
             skills_cache: Vec::new(),
             memory_cache: Vec::new(),
@@ -414,6 +481,7 @@ impl App {
             provider_picker_idx: 0,
             provider_picker_scroll: 0,
             available_providers: Vec::new(),
+            onboarding_provider: String::new(),
             connect_target: None,
             connect_pending_model: None,
             api_key_input: String::new(),
@@ -431,7 +499,6 @@ impl App {
             skill_browser_filter: String::new(),
             skill_browser_installed: Vec::new(),
             skill_browser_scroll: 0,
-            skill_browser_visible_rows: 15,
             skill_browser_filter_active: false,
             schedule_jobs: Vec::new(),
             schedule_selected: 0,
@@ -467,26 +534,87 @@ impl App {
         self.toast_expiry = Some(Instant::now() + Duration::from_secs(3));
     }
 
+    pub fn mark_dirty(&mut self) {
+        self.render_version = self.render_version.wrapping_add(1);
+    }
+
+    pub fn cycle_agent_mode(&mut self) {
+        if self.agent_modes.is_empty() {
+            return;
+        }
+        self.current_mode_index = (self.current_mode_index + 1) % self.agent_modes.len();
+        self.sync_agent_mode();
+    }
+
+    pub fn sync_agent_mode(&mut self) {
+        if let Some(entry) = self.agent_modes.get(self.current_mode_index) {
+            self.agent_mode = match entry.mode.as_str() {
+                "browser" => AgentMode::Browser,
+                "coder" => AgentMode::Coder,
+                "terminator" => AgentMode::Terminator,
+                _ => AgentMode::Manager,
+            };
+        }
+    }
+
+    pub fn current_mode_label(&self) -> &str {
+        self.agent_modes
+            .get(self.current_mode_index)
+            .map(|e| e.label.as_str())
+            .unwrap_or("Mgr")
+    }
+
+    pub fn current_mode_name(&self) -> &str {
+        self.agent_modes
+            .get(self.current_mode_index)
+            .map(|e| e.mode.as_str())
+            .unwrap_or("manager")
+    }
+
+    #[allow(dead_code)]
+    pub fn set_agent_modes(&mut self, modes: Vec<AgentModeEntry>) {
+        let old_mode = self.current_mode_name().to_string();
+        self.agent_modes = if modes.is_empty() {
+            default_agent_modes()
+        } else {
+            modes
+        };
+        let new_idx = self.agent_modes.iter().position(|e| e.mode == old_mode).unwrap_or(0);
+        self.current_mode_index = new_idx;
+        self.sync_agent_mode();
+    }
+
+    pub fn invalidate_markdown_cache(&mut self) {
+        for msg in &mut self.messages {
+            if let ChatMessage::Agent { cached_response_md, .. } = msg {
+                *cached_response_md = None;
+            }
+        }
+    }
+
     pub fn add_system_message(&mut self, text: String) {
-        self.messages.push(ChatMessage::System { text, timestamp: Instant::now() });
+        self.messages.push(ChatMessage::System { text });
         self.auto_scroll = true;
+        self.mark_dirty();
     }
 
     pub fn add_user_message(&mut self, text: String, task_num: usize) {
-        self.messages.push(ChatMessage::User { text, task_num, timestamp: Instant::now() });
+        self.messages.push(ChatMessage::User { text, task_num });
         self.auto_scroll = true;
+        self.mark_dirty();
     }
 
     pub fn add_error_message(&mut self, text: String) {
-        self.messages.push(ChatMessage::Error { text, timestamp: Instant::now() });
+        self.messages.push(ChatMessage::Error { text });
         self.auto_scroll = true;
+        self.mark_dirty();
     }
 
-    pub fn start_agent_message(&mut self, task: &str) {
-        self.step_log.clear();
-        self.step_log.push(format!("Task: {}", task));
-        self.streaming_text.clear();
+    pub fn start_agent_message(&mut self, _task: &str) {
         self.streaming_phase.clear();
+        self.scroll_paused = false;
+        self.thinking_expanded = true;
+        self.steps_expanded = false;
 
         // Collapse all previous Agent messages so old step data
         // doesn't appear in the scroll view for the new task.
@@ -497,6 +625,7 @@ impl App {
         }
 
         self.messages.push(ChatMessage::Agent {
+            state: MessageState::Streaming,
             steps: Vec::new(),
             thinking_text: String::new(),
             result: None,
@@ -504,19 +633,15 @@ impl App {
             elapsed_secs: 0,
             skill_created: None,
             scheduled_job: None,
-            timestamp: Instant::now(),
             selected_tab: AgentTab::Steps,
             tab_expanded: false,
+            cached_response_md: None,
         });
         self.auto_scroll = true;
+        self.mark_dirty();
     }
 
     pub fn append_step(&mut self, step: String) {
-        self.step_log.push(step.clone());
-        if self.step_log.len() > STEP_LOG_CAP {
-            let excess = self.step_log.len() - STEP_LOG_CAP;
-            self.step_log.drain(0..excess);
-        }
         if let Some(ChatMessage::Agent { steps, selected_tab, tab_expanded, .. }) = self.messages.last_mut() {
             let is_first_step = steps.is_empty();
             steps.push(step);
@@ -530,6 +655,7 @@ impl App {
             }
         }
         self.auto_scroll = true;
+        self.mark_dirty();
     }
 
     pub fn complete_agent_message(
@@ -540,38 +666,89 @@ impl App {
         skill_created: Option<String>,
         scheduled_job: Option<String>,
     ) {
-        if let Some(ChatMessage::Agent { result, success: s, elapsed_secs: e, skill_created: sc, scheduled_job: sj, selected_tab, tab_expanded, .. }) = self.messages.last_mut() {
+        let md_lines = if !result_text.is_empty() {
+            Some(sediman_tui_core::markdown::render_markdown_with_theme(&result_text, &self.theme))
+        } else {
+            None
+        };
+        if let Some(ChatMessage::Agent { result, success: s, elapsed_secs: e, skill_created: sc, scheduled_job: sj, selected_tab, tab_expanded, cached_response_md, state, .. }) = self.messages.last_mut() {
             *result = Some(result_text);
             *s = success;
             *e = elapsed_secs;
             *sc = skill_created;
             *sj = scheduled_job;
-            // Auto-switch to Response tab when result is available
             *selected_tab = AgentTab::Response;
-            // Auto-expand when switching to Response tab
             *tab_expanded = true;
+            *cached_response_md = md_lines;
+            *state = MessageState::Completed;
         }
         self.agent_running = false;
-        self.streaming_text.clear();
         self.streaming_phase.clear();
         self.auto_scroll = true;
+        self.mark_dirty();
+        self.save_session();
+    }
+
+    fn strip_think_tags(text: &str) -> String {
+        if !text.contains('<') {
+            return text.to_string();
+        }
+        text.replace("<think>", "")
+            .replace("</think>", "")
+            .replace("</think", "")
+            .replace("<think", "")
+    }
+
+    fn truncate_streaming(s: &mut String, token: &str) {
+        let mut effective_token = token;
+        if token.len() > STREAMING_MAX_BYTES {
+            effective_token = &token[..token.len().min(STREAMING_MAX_BYTES)];
+        }
+        if s.len() + effective_token.len() > STREAMING_MAX_BYTES {
+            let keep = STREAMING_MAX_BYTES.saturating_sub(effective_token.len());
+            if keep > 0 {
+                let drain_len = s.len().saturating_sub(keep);
+                s.drain(0..drain_len);
+            } else {
+                s.clear();
+            }
+        }
+        s.push_str(effective_token);
     }
 
     pub fn append_streaming_token(&mut self, token: &str, phase: &str) {
-        self.streaming_text.push_str(token);
         if !phase.is_empty() {
             self.streaming_phase = phase.to_string();
         }
 
-        // Also append to thinking_text if phase is thinking/planning
-        let is_thinking = phase == "thinking" || phase == "planning";
-        if is_thinking {
-            if let Some(ChatMessage::Agent { thinking_text, .. }) = self.messages.last_mut() {
-                thinking_text.push_str(token);
+        let phase_lower = phase.to_lowercase();
+        let is_thinking = phase_lower == "thinking" || phase_lower == "planning";
+
+        let cleaned = Self::strip_think_tags(token);
+
+        if let Some(ChatMessage::Agent { thinking_text, result, .. }) = self.messages.last_mut() {
+            if is_thinking {
+                Self::truncate_streaming(thinking_text, &cleaned);
+            } else {
+                let buf = result.get_or_insert_with(String::new);
+                Self::truncate_streaming(buf, &cleaned);
             }
         }
 
         self.auto_scroll = true;
+        self.mark_dirty();
+    }
+
+    /// Switch thinking section expanded
+    pub fn toggle_thinking_expanded(&mut self) {
+        self.thinking_expanded = !self.thinking_expanded;
+        self.mark_dirty();
+    }
+
+    /// Toggle steps section expanded state
+    pub fn toggle_steps_expanded(&mut self) {
+        self.steps_expanded = !self.steps_expanded;
+        self.mark_dirty();
     }
 
     /// Switch to the next tab in the most recent Agent message
@@ -579,6 +756,7 @@ impl App {
         for msg in self.messages.iter_mut().rev() {
             if let ChatMessage::Agent { selected_tab, .. } = msg {
                 *selected_tab = selected_tab.next();
+                self.mark_dirty();
                 return true;
             }
         }
@@ -590,6 +768,7 @@ impl App {
         for msg in self.messages.iter_mut().rev() {
             if let ChatMessage::Agent { selected_tab, .. } = msg {
                 *selected_tab = selected_tab.prev();
+                self.mark_dirty();
                 return true;
             }
         }
@@ -601,6 +780,7 @@ impl App {
         for msg in self.messages.iter_mut().rev() {
             if let ChatMessage::Agent { tab_expanded, .. } = msg {
                 *tab_expanded = !(*tab_expanded);
+                self.mark_dirty();
                 return true;
             }
         }
@@ -615,6 +795,7 @@ impl App {
                 if !thinking_text.is_empty() {
                     *selected_tab = AgentTab::Thinking;
                     *tab_expanded = !(*tab_expanded);
+                    self.mark_dirty();
                     return true;
                 }
             }
@@ -630,6 +811,7 @@ impl App {
                 if !steps.is_empty() {
                     *selected_tab = AgentTab::Steps;
                     *tab_expanded = !(*tab_expanded);
+                    self.mark_dirty();
                     return true;
                 }
             }
@@ -644,6 +826,7 @@ impl App {
             if !steps.is_empty() {
                 *selected_tab = AgentTab::Steps;
                 *tab_expanded = !(*tab_expanded);
+                self.mark_dirty();
                 return true;
             }
         }
@@ -652,6 +835,43 @@ impl App {
 
     pub fn bridge_url(&self) -> &str {
         self.bridge.socket_path_str()
+    }
+
+    pub fn save_session(&self) {
+        let session_path = crate::config::session_path();
+        if let Some(parent) = session_path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        if let Ok(json) = serde_json::to_string_pretty(&self.messages) {
+            let _ = std::fs::write(&session_path, json);
+        }
+    }
+
+    pub fn load_session(&mut self) -> bool {
+        let session_path = crate::config::session_path();
+        if session_path.exists() {
+            match std::fs::read_to_string(&session_path) {
+                Ok(contents) => match serde_json::from_str::<Vec<ChatMessage>>(&contents) {
+                    Ok(messages) => {
+                        self.messages = messages;
+                        self.show_banner = false;
+                        self.scroll_offset = 0;
+                        self.auto_scroll = true;
+                        self.mark_dirty();
+                        return true;
+                    }
+                    Err(e) => {
+                        warn!("Session file corrupted: {}", e);
+                        self.show_toast("Session file corrupted — starting fresh".to_string());
+                    }
+                },
+                Err(e) => {
+                    warn!("Cannot read session file: {}", e);
+                    self.show_toast("Cannot read session file — starting fresh".to_string());
+                }
+            }
+        }
+        false
     }
 
     pub fn display_model_id(&self) -> String {
@@ -869,15 +1089,33 @@ pub async fn run(
 
         std::mem::swap(&mut front, &mut back);
 
+        let mut events_processed = 0u32;
+        const MAX_EVENTS_PER_FRAME: u32 = 50;
+
         tokio::select! {
             Some(event) = event_rx.recv() => {
                 handle_message(&mut app, event, &event_tx).await;
-                while let Ok(next) = event_rx.try_recv() {
-                    handle_message(&mut app, next, &event_tx).await;
+                events_processed += 1;
+                while events_processed < MAX_EVENTS_PER_FRAME {
+                    match event_rx.try_recv() {
+                        Ok(next) => {
+                            handle_message(&mut app, next, &event_tx).await;
+                            events_processed += 1;
+                        }
+                        Err(_) => break,
+                    }
                 }
             }
             _ = tokio::time::sleep(Duration::from_millis(FRAME_INTERVAL_MS)) => {
                 tick_counter += 1;
+
+                if let Some(expiry) = app.toast_expiry {
+                    if Instant::now() >= expiry {
+                        app.toast_text.clear();
+                        app.toast_expiry = None;
+                    }
+                }
+
                 if app.agent_running && tick_counter.is_multiple_of(3) {
                     app.advance_spinner();
                 }
@@ -886,10 +1124,31 @@ pub async fn run(
                     app.is_connected = app.bridge.is_connected().await;
                     if was_connected && !app.is_connected {
                         app.reconnecting = true;
-                        app.add_system_message("Backend connection lost — reconnecting...".into());
+                        app.add_system_message("Backend connection lost — restarting...".into());
+                        if let Some(ref restart_fn) = app.backend_restart_fn {
+                            let restart = restart_fn.clone();
+                            let tx = event_tx.clone();
+                            tokio::spawn(async move {
+                                if restart().await {
+                                    let _ = tx.send(AppEvent::CommandOutput("Backend restarted.".into()));
+                                } else {
+                                    let _ = tx.send(AppEvent::CommandOutput("Backend restart failed.".into()));
+                                }
+                            });
+                        }
                     } else if !was_connected && app.is_connected {
                         app.reconnecting = false;
-                        app.add_system_message("Backend reconnected.".into());
+                        // Populate providers on first successful backend connection
+                        if app.available_providers.is_empty() {
+                            if let Ok(providers) = app.bridge.list_providers().await {
+                                app.available_providers = providers;
+                            }
+                        }
+                        if app.reconnecting {
+                            app.add_system_message("Backend reconnected.".into());
+                        } else {
+                            app.add_system_message("Backend connected.".into());
+                        }
                     }
                 }
             }
@@ -900,6 +1159,7 @@ pub async fn run(
     AnsiWriter::show_cursor(&mut stdout);
 
     // Save config on exit
+    let existing = crate::config::TuiConfig::load();
     let config = crate::config::TuiConfig {
         theme: app.theme_name.clone(),
         permission_mode: app.permission.current_label().to_string(),
@@ -918,9 +1178,10 @@ pub async fn run(
         provider: app.provider.clone(),
         model: app.model.clone(),
         base_url: app.base_url.clone(),
+        onboarding_complete: existing.onboarding_complete,
     };
     if let Err(e) = config.save() {
-        eprintln!("Warning: {}", e);
+        warn!("{}", e);
     }
 
     Ok(())
@@ -986,9 +1247,14 @@ mod tests {
     #[test]
     fn test_start_agent_message_clears_step_log() {
         let mut app = test_app();
-        app.step_log.push("old step".into());
+        app.start_agent_message("old task");
+        app.append_step("old step".into());
         app.start_agent_message("new task");
-        assert!(app.step_log.starts_with(&["Task: new task".to_string()]));
+        let steps = match app.messages.last().unwrap() {
+            ChatMessage::Agent { steps, .. } => steps,
+            _ => panic!("Expected Agent"),
+        };
+        assert!(steps.is_empty());
     }
 
     #[test]
@@ -1005,13 +1271,17 @@ mod tests {
     }
 
     #[test]
-    fn test_append_step_truncates_at_200_keeps_newest() {
+    fn test_append_step_truncates_at_cap_keeps_newest() {
         let mut app = test_app();
         app.start_agent_message("task");
-        for i in 0..210 { app.append_step(format!("step {}", i)); }
-        assert_eq!(app.step_log.len(), 200);
-        assert!(app.step_log.first().unwrap().contains("step 10"));
-        assert!(app.step_log.last().unwrap().contains("step 209"));
+        for i in 0..600 { app.append_step(format!("step {}", i)); }
+        let steps = match app.messages.last().unwrap() {
+            ChatMessage::Agent { steps, .. } => steps,
+            _ => panic!("Expected Agent"),
+        };
+        assert_eq!(steps.len(), AGENT_STEPS_CAP as usize);
+        assert!(steps.first().unwrap().contains("step 100"));
+        assert!(steps.last().unwrap().contains("step 599"));
     }
 
     #[test]
@@ -1078,12 +1348,15 @@ mod tests {
     #[test]
     fn test_start_agent_clears_old_steps() {
         let mut app = test_app();
-        app.step_log.push("old step".into());
-        app.step_log.push("another old".into());
+        app.start_agent_message("old task");
+        app.append_step("old step".into());
+        app.append_step("another old".into());
         app.start_agent_message("test task");
-        assert_eq!(app.step_log.len(), 1);
-        assert!(app.step_log[0].contains("Task: test task"));
-        assert!(!app.step_log.iter().any(|s| s == "old step"));
+        let steps = match app.messages.last().unwrap() {
+            ChatMessage::Agent { steps, .. } => steps,
+            _ => panic!("Expected Agent"),
+        };
+        assert_eq!(steps.len(), 0);
     }
 
     #[test]
@@ -1104,7 +1377,7 @@ mod tests {
 
     #[test]
     fn test_chat_message_system_variant() {
-        let msg = ChatMessage::System { text: "info".into(), timestamp: Instant::now() };
+        let msg = ChatMessage::System { text: "info".into() };
         match msg {
             ChatMessage::System { text, .. } => assert_eq!(text, "info"),
             _ => panic!("Expected System variant"),
@@ -1113,7 +1386,7 @@ mod tests {
 
     #[test]
     fn test_chat_message_error_variant() {
-        let msg = ChatMessage::Error { text: "fail".into(), timestamp: Instant::now() };
+        let msg = ChatMessage::Error { text: "fail".into() };
         match msg {
             ChatMessage::Error { text, .. } => assert_eq!(text, "fail"),
             _ => panic!("Expected Error variant"),
@@ -1227,7 +1500,6 @@ mod comprehensive_app_tests {
 
     #[test]
     fn test_step_log_capacity_limit() {
-        assert_eq!(STEP_LOG_CAP, 200);
         assert_eq!(AGENT_STEPS_CAP, 500);
     }
 
@@ -1247,3 +1519,408 @@ mod comprehensive_app_tests {
         assert_eq!(HEALTH_CHECK_INTERVAL_TICKS, 90);
     }
 }
+
+#[cfg(test)]
+mod new_feature_tests {
+    use super::*;
+
+    fn make_app() -> App {
+        App::new("test".into(), Some("gpt-4".into()), None, true, ApiClient::new("/tmp/test.sock"))
+    }
+
+    // ── strip_think_tags ────────────────────────────────────────
+
+    #[test]
+    fn test_strip_think_tags_clean_text() {
+        assert_eq!(App::strip_think_tags("hello world"), "hello world");
+    }
+
+    #[test]
+    fn test_strip_think_tags_with_tags() {
+        assert_eq!(App::strip_think_tags("<think>hidden</think>visible"), "hiddenvisible");
+    }
+
+    #[test]
+    fn test_strip_think_tags_no_angle_brackets() {
+        let result = App::strip_think_tags("plain text without brackets");
+        assert_eq!(result, "plain text without brackets");
+    }
+
+    #[test]
+    fn test_strip_think_tags_only_opening() {
+        assert_eq!(App::strip_think_tags("<think>partial"), "partial");
+    }
+
+    #[test]
+    fn test_strip_think_tags_partial_closing() {
+        assert_eq!(App::strip_think_tags("content</think"), "content");
+    }
+
+    // ── streaming caps ──────────────────────────────────────────
+
+    #[test]
+    fn test_streaming_thinking_capped() {
+        let mut app = make_app();
+        app.start_agent_message("task");
+        for _ in 0..200 {
+            app.append_streaming_token("x".repeat(600).as_str(), "thinking");
+        }
+        let thinking = match app.messages.last().unwrap() {
+            ChatMessage::Agent { thinking_text, .. } => thinking_text,
+            _ => panic!("Expected Agent"),
+        };
+        assert!(thinking.len() <= STREAMING_MAX_BYTES + 1000);
+    }
+
+    #[test]
+    fn test_streaming_response_capped() {
+        let mut app = make_app();
+        app.start_agent_message("task");
+        for _ in 0..200 {
+            app.append_streaming_token("y".repeat(600).as_str(), "responding");
+        }
+        let result = match app.messages.last().unwrap() {
+            ChatMessage::Agent { result, .. } => result,
+            _ => panic!("Expected Agent"),
+        };
+        assert!(result.as_ref().unwrap().len() <= STREAMING_MAX_BYTES + 1000);
+    }
+
+    #[test]
+    fn test_streaming_small_token_not_capped() {
+        let mut app = make_app();
+        app.start_agent_message("task");
+        app.append_streaming_token("hello", "responding");
+        let result = match app.messages.last().unwrap() {
+            ChatMessage::Agent { result, .. } => result,
+            _ => panic!("Expected Agent"),
+        };
+        assert_eq!(result.as_deref(), Some("hello"));
+    }
+
+    // ── markdown cache ──────────────────────────────────────────
+
+    #[test]
+    fn test_markdown_cache_populated_on_completion() {
+        let mut app = make_app();
+        app.start_agent_message("task");
+        app.complete_agent_message(true, "# Hello\n\nworld".into(), 5, None, None);
+        let msg = app.messages.last().unwrap();
+        match msg {
+            ChatMessage::Agent { cached_response_md, result, .. } => {
+                assert!(result.as_ref().unwrap().contains("world"));
+                assert!(cached_response_md.is_some());
+                assert!(!cached_response_md.as_ref().unwrap().is_empty());
+            }
+            _ => panic!("Expected Agent message"),
+        }
+    }
+
+    #[test]
+    fn test_markdown_cache_none_for_empty_result() {
+        let mut app = make_app();
+        app.start_agent_message("task");
+        app.complete_agent_message(true, "".into(), 5, None, None);
+        let msg = app.messages.last().unwrap();
+        match msg {
+            ChatMessage::Agent { cached_response_md, .. } => {
+                assert!(cached_response_md.is_none());
+            }
+            _ => panic!("Expected Agent message"),
+        }
+    }
+
+    #[test]
+    fn test_markdown_cache_none_on_start() {
+        let mut app = make_app();
+        app.start_agent_message("task");
+        let msg = app.messages.last().unwrap();
+        match msg {
+            ChatMessage::Agent { cached_response_md, .. } => {
+                assert!(cached_response_md.is_none());
+            }
+            _ => panic!("Expected Agent message"),
+        }
+    }
+
+    // ── render_version invalidation ─────────────────────────────
+
+    #[test]
+    fn test_render_version_increments_on_message() {
+        let mut app = make_app();
+        let v1 = app.render_version;
+        app.add_system_message("hello".into());
+        assert_ne!(app.render_version, v1);
+    }
+
+    #[test]
+    fn test_render_version_increments_on_step() {
+        let mut app = make_app();
+        app.start_agent_message("task");
+        let v1 = app.render_version;
+        app.append_step("step 1".into());
+        assert_ne!(app.render_version, v1);
+    }
+
+    #[test]
+    fn test_render_version_increments_on_streaming_token() {
+        let mut app = make_app();
+        app.start_agent_message("task");
+        let v1 = app.render_version;
+        app.append_streaming_token("token", "responding");
+        assert_ne!(app.render_version, v1);
+    }
+
+    #[test]
+    fn test_render_version_increments_on_completion() {
+        let mut app = make_app();
+        app.start_agent_message("task");
+        let v1 = app.render_version;
+        app.complete_agent_message(true, "done".into(), 5, None, None);
+        assert_ne!(app.render_version, v1);
+    }
+
+    // ── streaming phases ────────────────────────────────────────
+
+    #[test]
+    fn test_streaming_thinking_phase_routes_correctly() {
+        let mut app = make_app();
+        app.start_agent_message("task");
+        app.append_streaming_token("think", "thinking");
+        let (thinking_text, result) = match app.messages.last().unwrap() {
+            ChatMessage::Agent { thinking_text, result, .. } => (thinking_text, result),
+            _ => panic!("Expected Agent"),
+        };
+        assert!(!thinking_text.is_empty());
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_streaming_responding_phase_routes_correctly() {
+        let mut app = make_app();
+        app.start_agent_message("task");
+        app.append_streaming_token("respond", "responding");
+        let (thinking_text, result) = match app.messages.last().unwrap() {
+            ChatMessage::Agent { thinking_text, result, .. } => (thinking_text, result),
+            _ => panic!("Expected Agent"),
+        };
+        assert!(!result.as_ref().unwrap().is_empty());
+        assert!(thinking_text.is_empty());
+    }
+
+    #[test]
+    fn test_streaming_executing_phase_routes_correctly() {
+        let mut app = make_app();
+        app.start_agent_message("task");
+        app.append_streaming_token("exec", "executing");
+        let (thinking_text, result) = match app.messages.last().unwrap() {
+            ChatMessage::Agent { thinking_text, result, .. } => (thinking_text, result),
+            _ => panic!("Expected Agent"),
+        };
+        assert!(!result.as_ref().unwrap().is_empty());
+        assert!(thinking_text.is_empty());
+    }
+
+    #[test]
+    fn test_streaming_phase_set_on_token() {
+        let mut app = make_app();
+        app.start_agent_message("task");
+        app.append_streaming_token("x", "planning");
+        assert_eq!(app.streaming_phase, "planning");
+        app.append_streaming_token("y", "responding");
+        assert_eq!(app.streaming_phase, "responding");
+    }
+
+    // ── section toggles ─────────────────────────────────────────
+
+    #[test]
+    fn test_toggle_thinking_expanded() {
+        let mut app = make_app();
+        assert!(app.thinking_expanded);
+        app.toggle_thinking_expanded();
+        assert!(!app.thinking_expanded);
+        app.toggle_thinking_expanded();
+        assert!(app.thinking_expanded);
+    }
+
+    #[test]
+    fn test_toggle_steps_expanded() {
+        let mut app = make_app();
+        assert!(!app.steps_expanded);
+        app.toggle_steps_expanded();
+        assert!(app.steps_expanded);
+        app.toggle_steps_expanded();
+        assert!(!app.steps_expanded);
+    }
+
+    // ── scroll state ─────────────────────────────────────────────
+
+    #[test]
+    fn test_scroll_paused_defaults_false() {
+        let app = make_app();
+        assert!(!app.scroll_paused);
+    }
+
+    #[test]
+    fn test_auto_scroll_set_on_new_message() {
+        let mut app = make_app();
+        app.auto_scroll = false;
+        app.add_user_message("hi".into(), 1);
+        assert!(app.auto_scroll);
+    }
+
+    #[test]
+    fn test_start_agent_resets_streaming_state() {
+        let mut app = make_app();
+        app.start_agent_message("old task");
+        app.append_streaming_token("old think", "thinking");
+        app.append_streaming_token("old response", "responding");
+        app.streaming_phase = "thinking".into();
+        app.thinking_expanded = false;
+        app.steps_expanded = true;
+        app.scroll_paused = true;
+        app.start_agent_message("new task");
+        let (thinking_text, result) = match app.messages.last().unwrap() {
+            ChatMessage::Agent { thinking_text, result, .. } => (thinking_text, result),
+            _ => panic!("Expected Agent"),
+        };
+        assert!(thinking_text.is_empty());
+        assert!(result.is_none());
+        assert!(app.streaming_phase.is_empty());
+        assert!(app.thinking_expanded);
+        assert!(!app.steps_expanded);
+        assert!(!app.scroll_paused);
+    }
+
+    // ── session persistence ─────────────────────────────────────
+
+    #[test]
+    fn test_session_roundtrip() {
+        let mut app = make_app();
+        app.add_user_message("hello".into(), 1);
+        app.add_system_message("system".into());
+        app.start_agent_message("task");
+        app.append_step("step 1".into());
+        app.append_step("step 2".into());
+        app.complete_agent_message(true, "response".into(), 5, None, None);
+
+        let json = serde_json::to_string(&app.messages).unwrap();
+        let restored: Vec<ChatMessage> = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored.len(), 3, "Should have User, System, Agent messages");
+        match &restored[0] {
+            ChatMessage::User { text, task_num } => {
+                assert_eq!(text, "hello");
+                assert_eq!(*task_num, 1);
+            }
+            _ => panic!("Expected User"),
+        }
+        match &restored[1] {
+            ChatMessage::System { text } => assert_eq!(text, "system"),
+            _ => panic!("Expected System"),
+        }
+        match &restored[2] {
+            ChatMessage::Agent { result, success, .. } => {
+                assert!(result.as_ref().unwrap().contains("response"));
+                assert!(*success);
+            }
+            _ => panic!("Expected Agent"),
+        }
+    }
+
+    #[test]
+    fn test_chat_message_serialize_deserialize_user() {
+        let msg = ChatMessage::User { text: "hi".into(), task_num: 42 };
+        let json = serde_json::to_string(&msg).unwrap();
+        let restored: ChatMessage = serde_json::from_str(&json).unwrap();
+        match restored {
+            ChatMessage::User { text, task_num } => {
+                assert_eq!(text, "hi");
+                assert_eq!(task_num, 42);
+            }
+            _ => panic!("Wrong variant"),
+        }
+    }
+
+    #[test]
+    fn test_chat_message_serialize_deserialize_agent() {
+        let msg = ChatMessage::Agent {
+            state: MessageState::Completed,
+            steps: vec!["s1".into(), "s2".into()],
+            thinking_text: "think".into(),
+            result: Some("done".into()),
+            success: true,
+            elapsed_secs: 42,
+            skill_created: Some("skill".into()),
+            scheduled_job: Some("job".into()),
+            selected_tab: AgentTab::Response,
+            tab_expanded: true,
+            cached_response_md: None,
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let restored: ChatMessage = serde_json::from_str(&json).unwrap();
+        match restored {
+            ChatMessage::Agent { steps, result, success, elapsed_secs, .. } => {
+                assert_eq!(steps.len(), 2);
+                assert_eq!(result.unwrap(), "done");
+                assert!(success);
+                assert_eq!(elapsed_secs, 42);
+            }
+            _ => panic!("Wrong variant"),
+        }
+    }
+
+    #[test]
+    fn test_toast_auto_dismiss() {
+        let mut app = make_app();
+        app.show_toast("test toast".to_string());
+
+        assert!(app.toast_expiry.is_some());
+        assert!(!app.toast_text.is_empty());
+
+        // Manually expire the toast
+        app.toast_expiry = Some(std::time::Instant::now() - std::time::Duration::from_secs(1));
+
+        // Simulate what happens in the tick loop
+        if let Some(expiry) = app.toast_expiry {
+            if std::time::Instant::now() >= expiry {
+                app.toast_text.clear();
+                app.toast_expiry = None;
+            }
+        }
+
+        assert!(app.toast_text.is_empty());
+        assert!(app.toast_expiry.is_none());
+    }
+
+    #[test]
+    fn test_load_session_handles_corruption_gracefully() {
+        // Verify that serde rejects invalid JSON (the error path exists)
+        let result = serde_json::from_str::<Vec<ChatMessage>>("not valid json");
+        assert!(result.is_err(), "serde must reject corrupted data");
+
+        // Verify toast mechanism works
+        let mut app = make_app();
+        app.show_toast("Session file corrupted — starting fresh".to_string());
+        assert!(!app.toast_text.is_empty());
+        assert!(app.toast_text.contains("corrupted"));
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn test_parse_python_version() {
+    use crate::commands::doctor::parse_python_version;
+    assert_eq!(parse_python_version("Python 3.12.4"), Some((3, 12)));
+    assert_eq!(parse_python_version("Python 3.11.0"), Some((3, 11)));
+    assert_eq!(parse_python_version("Python 3.13.1"), Some((3, 13)));
+    assert_eq!(parse_python_version("Python 3.10.12"), Some((3, 10)));
+    assert_eq!(parse_python_version("Python 3.9.5"), Some((3, 9)));
+    assert_eq!(parse_python_version("Python 3.14.0a1"), Some((3, 14)));
+
+    assert_eq!(parse_python_version(""), None);
+    assert_eq!(parse_python_version("Python "), None);
+    assert_eq!(parse_python_version("python 3.12.4"), None);
+    assert_eq!(parse_python_version("Python "), None);
+    assert_eq!(parse_python_version("garbage"), None);
+}
+

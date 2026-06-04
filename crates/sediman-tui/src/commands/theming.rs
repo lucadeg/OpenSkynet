@@ -1,5 +1,6 @@
 use sediman_tui_core::command::{Command, CommandCategory};
 use sediman_tui_core::styling;
+use tracing::warn;
 
 use crate::app::{App, AppModal};
 
@@ -21,6 +22,7 @@ pub async fn handle_themes(app: &mut App, _args: &str) {
 }
 
 pub fn save_config_now(app: &App) {
+    let existing = crate::config::TuiConfig::load();
     let config = crate::config::TuiConfig {
         theme: app.theme_name.clone(),
         permission_mode: app.permission.current_label().to_string(),
@@ -39,8 +41,9 @@ pub fn save_config_now(app: &App) {
         provider: app.provider.clone(),
         model: app.model.clone(),
         base_url: app.base_url.clone(),
+        onboarding_complete: existing.onboarding_complete,
     };
     if let Err(e) = config.save() {
-        eprintln!("Warning: {}", e);
+        warn!("{}", e);
     }
 }

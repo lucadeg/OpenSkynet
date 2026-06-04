@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "openskynet"
-version = "0.3.10"
+version = "0.3.11"
 description = "A self-improving browser agent that runs 24/7"
 readme = "README.md"
 license = {text = "BSL-1.1"}
@@ -64,6 +64,7 @@ dependencies = [
     "pywa>=3.9.0",
     "lark-oapi>=1.6.8",
     "python-magic>=0.4.27",
+    "opensandbox>=0.1.9",
 ]
 
 [project.scripts]

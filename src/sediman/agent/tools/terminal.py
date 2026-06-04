@@ -4,7 +4,7 @@ from typing import Any
 
 import structlog
 
-from sediman.agent.sandbox_runner import SandboxRunner, get_sandbox_dirs
+from sediman.agent.sandbox_runner import SandboxRunner
 from sediman.agent.tool_dispatch import ToolResult
 
 logger = structlog.get_logger()
@@ -50,13 +50,11 @@ async def _handle_terminal(
             )
 
     runner = _get_runner()
-    allow_dirs = get_sandbox_dirs(cwd)
 
     result = await runner.run(
         command=command,
         cwd=cwd,
         timeout=timeout,
-        allow_dirs=allow_dirs,
         allow_net=allow_net,
     )
 
@@ -67,8 +65,14 @@ async def _handle_terminal(
         )
 
     output = result.output or ""
-    if len(output) > 10000:
-        output = output[:10000] + "\n... (output truncated)"
+    if len(output) > 30000:
+        lines = output.splitlines()
+        if len(lines) > 100:
+            head = "\n".join(lines[:60])
+            tail = "\n".join(lines[-40:])
+            output = f"{head}\n... ({len(lines) - 100} lines omitted) ...\n{tail}"
+        else:
+            output = output[:30000] + "\n... (output truncated)"
 
     if not result.success and not result.timed_out:
         output = _format_error_output(command, result.exit_code, output)

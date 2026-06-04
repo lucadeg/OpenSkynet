@@ -62,7 +62,7 @@ impl TextEditor {
                 continue;
             }
 
-            let w = unicode_width::UnicodeWidthChar::width(c).unwrap_or(1).max(1);
+            let w = unicode_width::UnicodeWidthChar::width(c).unwrap_or(0);
             col += w;
             if col >= capacity {
                 lines += 1;
@@ -460,7 +460,7 @@ impl TextEditor {
                 } else {
                     buf.put_char(cx, y, c, text_style);
                 }
-                let w = unicode_width::UnicodeWidthChar::width(c).unwrap_or(1);
+                let w = unicode_width::UnicodeWidthChar::width(c).unwrap_or(0);
                 if w > 1 {
                     for _ in 1..w {
                         let skip_x = cx + 1;
@@ -561,7 +561,7 @@ impl TextEditor {
                 } else {
                     buf.put_char(cx, y, c, text_style);
                 }
-                let w = unicode_width::UnicodeWidthChar::width(c).unwrap_or(1);
+                let w = unicode_width::UnicodeWidthChar::width(c).unwrap_or(0);
                 if w > 1 {
                     for _ in 1..w {
                         let skip_x = cx + 1;

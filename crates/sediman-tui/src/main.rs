@@ -6,6 +6,7 @@ use std::io::Write;
 use clap::Parser;
 use crossterm::{execute, event::{EnableBracketedPaste, DisableBracketedPaste, EnableMouseCapture, DisableMouseCapture}};
 use crossterm::terminal::{EnterAlternateScreen, LeaveAlternateScreen};
+use tracing::{debug, error, info, warn};
 
 mod app;
 mod update;
@@ -50,6 +51,9 @@ struct Args {
     /// Show backend (Python) stderr output in the terminal
     #[arg(long)]
     verbose: bool,
+
+    #[arg(long)]
+    resume: bool,
 }
 
 fn find_project_root() -> Option<PathBuf> {
@@ -92,17 +96,17 @@ async fn ensure_backend(
                 match tokio::time::timeout(Duration::from_secs(1), bridge.list_models(None)).await {
                     Ok(Ok(_)) => true,
                     _ => {
-                        eprintln!("Backend status OK but models call failed - treating as stale");
+                        warn!("Backend status OK but models call failed - treating as stale");
                         false
                     }
                 }
             }
             Ok(Err(e)) => {
-                eprintln!("Backend status call failed: {} - treating as stale", e);
+                warn!("Backend status call failed: {} - treating as stale", e);
                 false
             }
             Err(_) => {
-                eprintln!("Backend status call timed out - treating as stale");
+                warn!("Backend status call timed out - treating as stale");
                 false
             }
         };
@@ -111,11 +115,11 @@ async fn ensure_backend(
             return None;
         }
 
-        eprintln!("Stale socket detected at {}, removing...", socket_path);
+        warn!("Stale socket detected at {}, removing...", socket_path);
         // Try multiple times to remove the socket
         for _ in 0..3 {
             if tokio::fs::remove_file(socket_path).await.is_ok() {
-                eprintln!("Successfully removed stale socket");
+                info!("Successfully removed stale socket");
                 break;
             }
             tokio::time::sleep(Duration::from_millis(100)).await;
@@ -123,8 +127,8 @@ async fn ensure_backend(
     }
 
     if no_spawn {
-        eprintln!("Warning: Backend not running at {} and --no-spawn set.", socket_path);
-        eprintln!("  Start it manually: sediman rpc-server");
+        warn!("Backend not running at {} and --no-spawn set.", socket_path);
+        info!("  Start it manually: sediman rpc-server");
         return None;
     }
 
@@ -149,8 +153,8 @@ async fn ensure_backend(
     };
 
     if candidates.is_empty() {
-        eprintln!("Error: Cannot find Python or uv to start the backend.");
-        eprintln!("  Install uv: curl -LsSf https://astral.sh/uv/install.sh | sh");
+        error!("Cannot find Python or uv to start the backend.");
+        error!("  Install uv: curl -LsSf https://astral.sh/uv/install.sh | sh");
         return None;
     }
 
@@ -158,12 +162,12 @@ async fn ensure_backend(
     let root = std::env::var("SEDIMAN_ROOT").ok().map(PathBuf::from)
         .or_else(|| project_root.clone())
         .unwrap_or_else(default_install_root);
-    eprintln!("  Backend root: {}", root.display());
+    info!("  Backend root: {}", root.display());
 
     let cwd = std::env::current_dir().unwrap_or_else(|_| root.clone());
 
     for (cmd, args) in &candidates {
-        eprintln!("Starting backend: {} {}", cmd, args.join(" "));
+        info!("Starting backend: {} {}", cmd, args.join(" "));
 
         let is_uv_run = *cmd == "uv";
         let work_dir = if is_uv_run {
@@ -192,7 +196,7 @@ async fn ensure_backend(
         let mut child = match child_cmd.spawn() {
             Ok(c) => c,
             Err(e) => {
-                eprintln!("  Failed to start: {}", e);
+                warn!("  Failed to start: {}", e);
                 continue;
             }
         };
@@ -204,7 +208,7 @@ async fn ensure_backend(
                 let mut lines = reader.lines();
                 while let Ok(Some(line)) = lines.next_line().await {
                     if verbose {
-                        eprintln!("[backend] {}", line);
+                        debug!("[backend] {}", line);
                     }
                 }
             });
@@ -215,12 +219,12 @@ async fn ensure_backend(
         for i in 0..10 {
             tokio::time::sleep(Duration::from_millis(500)).await;
             if tokio::fs::metadata(socket_path).await.is_ok() {
-                eprintln!("  Backend ready ({})", socket_path);
+                info!("  Backend ready ({})", socket_path);
                 return Some(child);
             }
             match child.try_wait() {
                 Ok(Some(status)) => {
-                    eprintln!("  Backend exited: {} — trying next...", status);
+                    warn!("  Backend exited: {} — trying next...", status);
                     died = true;
                     break;
                 }
@@ -228,7 +232,7 @@ async fn ensure_backend(
                 Err(_) => {}
             }
             if i == 2 {
-                eprintln!("  Waiting for backend...");
+                info!("  Waiting for backend...");
             }
         }
 
@@ -237,7 +241,7 @@ async fn ensure_backend(
         }
     }
 
-    eprintln!("Error: All backend candidates failed.");
+    error!("All backend candidates failed.");
     None
 }
 
@@ -301,7 +305,7 @@ fn spawn_update_check_if_due(config: &crate::config::TuiConfig) {
             Ok(Some(release)) => {
                 // Update available - show toast notification
                 // For now, we'll just log it since we don't have access to the app
-                eprintln!("Update available: {} -> {}", env!("CARGO_PKG_VERSION"), release.version());
+                info!("Update available: {} -> {}", env!("CARGO_PKG_VERSION"), release.version());
 
                 // Save the check timestamp
                 let mut config = crate::config::TuiConfig::load();
@@ -315,7 +319,7 @@ fn spawn_update_check_if_due(config: &crate::config::TuiConfig) {
                 let _ = config.save();
             }
             Err(e) => {
-                eprintln!("Update check failed: {}", e);
+                warn!("Update check failed: {}", e);
             }
         }
     });
@@ -327,132 +331,25 @@ fn main() {
     let args = Args::parse();
 
     // Now enter the async runtime for the actual TUI
-    let runtime = tokio::runtime::Runtime::new().expect("Failed to create runtime");
+    let runtime = match tokio::runtime::Runtime::new() {
+        Ok(rt) => rt,
+        Err(e) => {
+            eprintln!("Cannot start: async runtime creation failed: {}", e);
+            eprintln!("This usually means system resource limits are exhausted.");
+            eprintln!("Try: ulimit -n 65536");
+            std::process::exit(1);
+        }
+    };
     runtime.block_on(async_main(args));
 }
 
-async fn async_main(args: Args) {
-    // Set up panic handler now that we're in the async context
-    let original_hook = panic::take_hook();
-    panic::set_hook(Box::new(move |info| {
-        // Try to clean up terminal state, but don't panic if we fail
-        let _ = crossterm::terminal::disable_raw_mode();
-        let mut stdout = std::io::stdout();
-        let _ = execute!(stdout, DisableMouseCapture, DisableBracketedPaste, crossterm::cursor::Show, LeaveAlternateScreen);
-        let _ = stdout.flush();
-        original_hook(info);
-    }));
-
-    // Set up logging
-    logging::setup();
-
-    // Auto-start Python backend if needed
-    let backend_child = ensure_backend(
-        &args.socket,
-        args.no_spawn,
-        &args.provider,
-        args.model.as_deref(),
-        args.base_url.as_deref(),
-        args.verbose,
-    ).await;
-
-    let bridge = sediman_tui_bridge::ApiClient::new(&args.socket);
-
-    // Sync provider/model/base-url with the backend (in case it was already running).
-    // Retry a few times because the backend may have just started.
-    let mut synced = false;
-    for attempt in 0..5 {
-        match bridge.switch_model(
-            &args.provider,
-            args.model.as_deref(),
-            args.base_url.as_deref(),
-        ).await {
-            Ok(()) => { synced = true; break; }
-            Err(e) if attempt < 4 => {
-                eprintln!("switch_model attempt {} failed: {}, retrying...", attempt + 1, e);
-                tokio::time::sleep(Duration::from_millis(200 * (attempt + 1) as u64)).await;
-            }
-            Err(e) => {
-                eprintln!("Warning: Could not switch model ({})", e);
-            }
-        }
-    }
-    if synced {
-        eprintln!("Model synced: {} / {:?}", args.provider, args.model);
-    }
-
-    // Load persisted config
-    let saved_config = crate::config::TuiConfig::load();
-    let headless = if args.headless { true } else { saved_config.headless };
-
-    // Use saved provider/model if not specified via CLI args
-    let cli_provider = args.provider.clone();
-    let provider = if args.provider == "openai" && !saved_config.provider.is_empty() {
-        saved_config.provider.clone()
-    } else {
-        args.provider
-    };
-    let model = args.model.or_else(|| saved_config.model.clone());
-    let base_url = args.base_url.or_else(|| saved_config.base_url.clone());
-
-    // Switch model again if we're using saved config
-    // This ensures the backend loads the correct API key for the saved provider
-    if provider != cli_provider || model.is_some() {
-        match bridge.switch_model(
-            &provider,
-            model.as_deref(),
-            base_url.as_deref(),
-        ).await {
-            Ok(()) => {
-                eprintln!("Model loaded from config: {} / {:?}", provider, model);
-            }
-            Err(e) => {
-                eprintln!("Warning: Could not load saved model ({})", e);
-            }
-        }
-    }
-
-    // Spawn background update check if enabled (must be before any fields are moved)
-    spawn_update_check_if_due(&saved_config);
-
-    let mut app_state = app::App::new(provider, model, base_url, headless, bridge);
-
-    // Fetch available providers from the Python backend (with timeout)
-    match tokio::time::timeout(Duration::from_secs(5), app_state.bridge.list_providers()).await {
-        Ok(Ok(providers)) => {
-            eprintln!("Loaded {} providers from backend", providers.len());
-            app_state.available_providers = providers;
-        }
-        Ok(Err(e)) => {
-            eprintln!("Warning: Could not fetch providers ({})", e);
-        }
-        Err(_) => {
-            eprintln!("Warning: Timeout fetching providers. Continuing with default providers.");
-        }
-    }
-
-    // Fetch available models (with timeout)
-    match tokio::time::timeout(Duration::from_secs(5), app_state.bridge.list_models(None)).await {
-        Ok(Ok(models)) => {
-            app_state.model_list = models;
-        }
-        Ok(Err(_)) => {
-            // Silently skip models on error
-        }
-        Err(_) => {
-            // Silently skip models on timeout
-        }
-    }
-
-    // Apply saved theme
+fn apply_saved_config(app_state: &mut app::App, saved_config: &config::TuiConfig) {
     if !saved_config.theme.is_empty() {
         if let Some(theme) = sediman_tui_core::styling::load_theme(&saved_config.theme) {
             app_state.theme = theme;
             app_state.theme_name = saved_config.theme.clone();
         }
     }
-
-    // Apply saved config to app state
     if saved_config.side_panel_open {
         app_state.show_side_panel = true;
     }
@@ -462,35 +359,139 @@ async fn async_main(args: Args) {
         "Schedule" => app::SideTab::Schedule,
         _ => app::SideTab::Status,
     };
-
-    // Apply saved coder backend
     if !saved_config.coder_backend.is_empty() {
-        app_state.coder_backend = saved_config.coder_backend;
+        app_state.coder_backend = saved_config.coder_backend.clone();
+    }
+    if !saved_config.search_mode.is_empty() {
+        app_state.search_mode = saved_config.search_mode.clone();
+    }
+}
+
+async fn async_main(args: Args) {
+    let original_hook = panic::take_hook();
+    panic::set_hook(Box::new(move |info| {
+        let _ = crossterm::terminal::disable_raw_mode();
+        let mut stdout = std::io::stdout();
+        let _ = execute!(stdout, DisableMouseCapture, DisableBracketedPaste, crossterm::cursor::Show, LeaveAlternateScreen);
+        let _ = stdout.flush();
+        original_hook(info);
+    }));
+
+    logging::setup(args.verbose);
+
+    let socket_path = args.socket.clone();
+    let no_spawn = args.no_spawn;
+    let provider_cli = args.provider.clone();
+    let _model_cli = args.model.clone();
+    let _base_url_cli = args.base_url.clone();
+    let verbose = args.verbose;
+
+    let saved_config = crate::config::TuiConfig::load();
+    let headless = if args.headless { true } else { saved_config.headless };
+
+    let provider = if provider_cli == "openai" && !saved_config.provider.is_empty() {
+        saved_config.provider.clone()
+    } else {
+        provider_cli.clone()
+    };
+    let model = args.model.or_else(|| saved_config.model.clone());
+    let base_url = args.base_url.or_else(|| saved_config.base_url.clone());
+
+    let bridge = sediman_tui_bridge::ApiClient::new(&socket_path);
+    spawn_update_check_if_due(&saved_config);
+
+    let mut app_state = app::App::new(provider.clone(), model.clone(), base_url.clone(), headless, bridge);
+    app_state.is_connected = false;
+
+    // Apply saved config
+    apply_saved_config(&mut app_state, &saved_config);
+
+    if !saved_config.onboarding_complete {
+        app_state.active_modal = Some(app::AppModal::OnboardingWizard { step: 0 });
     }
 
-    // Apply saved search mode
-    if !saved_config.search_mode.is_empty() {
-        app_state.search_mode = saved_config.search_mode;
+    if args.resume && app_state.load_session() {
+        info!("Resumed previous session ({} messages)", app_state.messages.len());
     }
+
+    // Set up backend restart function
+    let restart_socket = socket_path.clone();
+    let restart_provider = provider.clone();
+    let restart_model = model.clone();
+    let restart_base_url = base_url.clone();
+    let restart_verbose = verbose;
+    app_state.backend_restart_fn = Some(std::sync::Arc::new(move || {
+        let socket = restart_socket.clone();
+        let p = restart_provider.clone();
+        let m = restart_model.clone();
+        let url = restart_base_url.clone();
+        Box::pin(async move {
+            ensure_backend(&socket, false, &p, m.as_deref(), url.as_deref(), restart_verbose).await;
+            let bridge = sediman_tui_bridge::ApiClient::new(&socket);
+            for _ in 0..10 {
+                if bridge.is_connected().await { return true; }
+                tokio::time::sleep(Duration::from_millis(500)).await;
+            }
+            false
+        })
+    }));
+
+    // Spawn backend startup in background
+    let startup_socket = socket_path.clone();
+    let startup_provider = provider.clone();
+    let startup_model = model.clone();
+    let startup_base_url = base_url.clone();
+    let startup_bridge = sediman_tui_bridge::ApiClient::new(&startup_socket);
+    let startup_no_spawn = no_spawn;
+    let startup_verbose = verbose;
+
+    tokio::spawn(async move {
+        let _child = ensure_backend(
+            &startup_socket, startup_no_spawn,
+            &startup_provider, startup_model.as_deref(), startup_base_url.as_deref(),
+            startup_verbose,
+        ).await;
+
+        // Sync model
+        for _ in 0..5 {
+            if startup_bridge.switch_model(
+                &startup_provider, startup_model.as_deref(), startup_base_url.as_deref(),
+            ).await.is_ok() { break; }
+            tokio::time::sleep(Duration::from_millis(500)).await;
+        }
+
+        // Load providers
+        if let Ok(Ok(providers)) = tokio::time::timeout(
+            Duration::from_secs(5), startup_bridge.list_providers(),
+        ).await {
+            info!("Loaded {} providers", providers.len());
+        }
+
+        // Load models
+        if let Ok(Ok(models)) = tokio::time::timeout(
+            Duration::from_secs(5), startup_bridge.list_models(None),
+        ).await {
+            info!("Loaded {} models", models.len());
+        }
+    });
 
     if args.gpu {
         #[cfg(feature = "gpu")]
         {
             let result = gpu_app::run_gpu(app_state).await;
             if let Err(e) = result {
-                eprintln!("GPU error: {}", e);
+                error!("GPU error: {}", e);
                 std::process::exit(1);
             }
             return;
         }
         #[cfg(not(feature = "gpu"))]
         {
-            eprintln!("GPU support not compiled in. Rebuild with: cargo build --features gpu");
+            error!("GPU support not compiled in.");
             std::process::exit(1);
         }
     }
 
-    // Set up terminal for TUI
     crossterm::terminal::enable_raw_mode().expect("Failed to enable raw mode");
     let mut stdout = std::io::stdout();
     let _ = execute!(stdout, EnterAlternateScreen, crossterm::cursor::Hide, EnableBracketedPaste, EnableMouseCapture);
@@ -502,13 +503,9 @@ async fn async_main(args: Args) {
     let _ = execute!(stdout, DisableMouseCapture, DisableBracketedPaste, crossterm::cursor::Show, LeaveAlternateScreen);
     let _ = stdout.flush();
 
-    // Clean up backend if we spawned it
-    if let Some(mut child) = backend_child {
-        let _ = child.kill().await;
-    }
 
     if let Err(e) = result {
-        eprintln!("Error: {}", e);
+        error!("Error: {}", e);
         std::process::exit(1);
     }
 }

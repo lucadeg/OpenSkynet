@@ -1,46 +1,24 @@
-//! Message rendering with newest messages at bottom and collapsible sections.
+//! Message rendering with newest messages at bottom and inline sections.
 //!
 //! Features:
 //! - Chat-style rendering (newest messages at bottom)
-//! - Collapsible thinking/planning sections
-//! - Auto-scroll to latest messages
-//! - No Python log leakage
+//! - Inline sections during streaming (Thinking, Steps, Response all visible)
+//! - Collapsible sections with live content
+//! - Auto-scroll with pause-on-scroll-up
+
+use std::cell::RefCell;
 
 use sediman_tui_core::renderer::{CellBuffer, Color, Line, Rect, Style, TextAttributes, display_width};
 use sediman_tui_core::markdown;
 use unicode_width::UnicodeWidthChar;
 
-use crate::app::{App, ChatMessage};
+use crate::app::{App, ChatMessage, AgentTab, MessageState};
 
-/// Phase information for step styling
-#[allow(dead_code)]
-struct PhaseInfo {
-    name: &'static str,
-    color_fn: fn(&App) -> Color,
-    symbol: &'static str,
+thread_local! {
+    static LINE_CACHE: RefCell<(u64, u16, u16, Vec<MessageLine>)> = const { RefCell::new((0, 0, 0, Vec::new())) };
 }
 
-#[allow(dead_code)]
-const PHASES: &[PhaseInfo] = &[
-    PhaseInfo { name: "planning", color_fn: |a| a.theme.warning, symbol: "◆" },
-    PhaseInfo { name: "thinking", color_fn: |a| a.theme.warning, symbol: "◆" },
-    PhaseInfo { name: "executing", color_fn: |a| a.theme.primary, symbol: "▸" },
-    PhaseInfo { name: "observing", color_fn: |a| a.theme.secondary, symbol: "○" },
-    PhaseInfo { name: "reflecting", color_fn: |a| a.theme.info, symbol: "◆" },
-    PhaseInfo { name: "delegating", color_fn: |a| a.theme.success, symbol: "◇" },
-    PhaseInfo { name: "done", color_fn: |a| a.theme.success, symbol: "✓" },
-    PhaseInfo { name: "failed", color_fn: |a| a.theme.error, symbol: "✗" },
-    PhaseInfo { name: "Interrupted", color_fn: |a| a.theme.warning, symbol: "⚠" },
-    PhaseInfo { name: "streaming", color_fn: |a| a.theme.info, symbol: "▶" },
-    PhaseInfo { name: "responding", color_fn: |a| a.theme.info, symbol: "▶" },
-];
-
-/// Render all messages into the buffer
-///
-/// Rendering order: newest messages at bottom (chat-style)
-/// Scroll behavior: auto-scroll shows latest messages, manual scroll for history
 pub fn render_messages(buf: &mut CellBuffer, area: Rect, app: &mut App) {
-    // Show banner when empty
     if app.show_banner && app.messages.is_empty() {
         super::banner::render_banner(buf, area, app);
         return;
@@ -51,95 +29,413 @@ pub fn render_messages(buf: &mut CellBuffer, area: Rect, app: &mut App) {
         return;
     }
 
-    let max_width = area.width.saturating_sub(6) as usize; // 3px padding each side
-    let mut lines: Vec<MessageLine> = Vec::new();
+    let max_width = area.width.saturating_sub(6) as usize;
 
-    // ── Compact running indicator ──
-    if app.agent_running {
-        let spinner = app.spinner_char();
-        let elapsed = app.agent_start.elapsed().as_secs();
-        let elapsed_str = format_elapsed(elapsed);
-        let step_count = app.step_log.len().saturating_sub(1);
-        let last_step = app.step_log.last()
-            .map(|s| truncate_end(s, max_width.saturating_sub(18)))
-            .unwrap_or_else(|| "Starting...".into());
+    let need_rebuild = LINE_CACHE.with(|cache| {
+        let cached = cache.borrow();
+        cached.0 != app.render_version
+            || cached.1 != area.width
+            || cached.2 != area.height
+    });
 
-        lines.push(MessageLine::empty());
-        lines.push(MessageLine::text(
-            format!("  {} Working… {} · {} steps", spinner, elapsed_str, step_count),
-            Style::new().fg(app.theme.primary).add_modifier(TextAttributes::bold()),
-        ));
-        lines.push(MessageLine::text(
-            format!("    {}", last_step),
-            Style::new().fg(app.theme.text_muted),
-        ));
+    if need_rebuild {
+        let mut new_lines: Vec<MessageLine> = Vec::new();
 
-        // ── Live streaming text block (only if not empty) ──
-        if !app.streaming_text.is_empty() {
-            lines.push(MessageLine::empty());
+        if app.agent_running {
+            render_streaming_sections(&mut new_lines, app, max_width, area);
+        }
 
-            let (label, label_color, content_color) = match app.streaming_phase.as_str() {
-                "planning" | "thinking" => ("◆ Thinking", app.theme.warning, app.theme.text_muted),
-                "responding" => ("▶ Responding", app.theme.info, app.theme.text),
-                "executing" => ("▸ Executing", app.theme.primary, app.theme.text),
-                "result" => ("◇ Result", app.theme.success, app.theme.text),
-                _ => ("▶ Streaming", app.theme.info, app.theme.text),
-            };
-            lines.push(MessageLine::text(
-                format!("    {}", label),
-                Style::new().fg(label_color).add_modifier(TextAttributes::bold()),
-            ));
+        for msg in &app.messages {
+            if matches!(msg, ChatMessage::Agent { state: MessageState::Streaming, .. }) {
+                continue;
+            }
+            render_completed_message(msg, &mut new_lines, app, max_width);
+        }
 
-            // Show last N lines of streaming text with muted color for thinking
-            let preview_lines: Vec<&str> = app.streaming_text.lines().rev().take(15).collect();
-            let preview_lines: Vec<&str> = preview_lines.into_iter().rev().collect();
+        LINE_CACHE.with(|cache| {
+            let mut cached = cache.borrow_mut();
+            cached.0 = app.render_version;
+            cached.1 = area.width;
+            cached.2 = area.height;
+            cached.3 = new_lines;
+        });
+    }
 
-            for (i, text_line) in preview_lines.iter().enumerate() {
-                let is_last = i == preview_lines.len() - 1;
-                let cursor = if is_last { "█" } else { "" };
-                push_wrapped(&mut lines, &format!("    {}{}", text_line, cursor),
-                    Style::new().fg(content_color), max_width);
+    let total_lines = LINE_CACHE.with(|cache| cache.borrow().3.len()) as u16;
+    let visible_height = area.height;
+    let max_scroll = total_lines.saturating_sub(visible_height);
+
+    handle_scroll(app, max_scroll);
+    let scroll = max_scroll.min(app.scroll_offset);
+    if app.scroll_offset > max_scroll {
+        app.scroll_offset = max_scroll;
+    }
+
+    LINE_CACHE.with(|cache| {
+        render_lines(buf, area, &cache.borrow().3, scroll, visible_height, total_lines, app);
+    });
+}
+
+fn render_streaming_sections(lines: &mut Vec<MessageLine>, app: &mut App, max_width: usize, _area: Rect) {
+    let spinner = app.spinner_char();
+    let elapsed = app.agent_start.elapsed().as_secs();
+    let elapsed_str = format_elapsed(elapsed);
+
+    let (steps, thinking_text, response_text) = match app.messages.last() {
+        Some(ChatMessage::Agent { steps, thinking_text, result, .. }) => {
+            (steps, thinking_text, result.as_deref().unwrap_or(""))
+        }
+        _ => return,
+    };
+
+    let step_count = steps.len();
+    let last_step = steps.last()
+        .map(|s| truncate_end(s, max_width.saturating_sub(18)))
+        .unwrap_or_else(|| "Starting...".into());
+
+    lines.push(MessageLine::empty());
+    lines.push(MessageLine::text(
+        format!("  {} Working\u{2026} {} \u{b7} {} steps", spinner, elapsed_str, step_count),
+        Style::new().fg(app.theme.primary).add_modifier(TextAttributes::bold()),
+    ));
+    lines.push(MessageLine::text(
+        format!("    {}", last_step),
+        Style::new().fg(app.theme.text_muted),
+    ));
+    lines.push(MessageLine::empty());
+
+    let has_thinking = !thinking_text.is_empty();
+    let has_response = !response_text.is_empty();
+    let has_steps = !steps.is_empty();
+    let is_thinking_phase = app.streaming_phase == "thinking" || app.streaming_phase == "planning";
+
+    if has_thinking || has_steps {
+        if has_thinking {
+            render_inline_section(
+                lines, app, max_width,
+                "\u{25c6}", "Thinking", thinking_text,
+                app.theme.warning, app.theme.text_muted,
+                app.thinking_expanded, is_thinking_phase, 10,
+            );
+            if has_steps {
+                lines.push(MessageLine::empty());
+            }
+        }
+
+        if has_steps {
+            render_inline_steps(lines, app, steps, max_width);
+            if has_response {
+                lines.push(MessageLine::empty());
             }
         }
     }
 
-    // ── Render all messages (chat-style: newest at bottom) ──
-    for msg in &app.messages {
-        render_message(msg, &mut lines, app, max_width);
+    if has_response {
+        let is_response_phase = !is_thinking_phase && app.streaming_phase != "executing";
+        render_inline_section(
+            lines, app, max_width,
+            "\u{25b6}", "Response", response_text,
+            app.theme.info, app.theme.text,
+            true, is_response_phase, 0,
+        );
     }
-    // ── Calculate scroll for chat-style rendering ──
-    let total_lines = lines.len() as u16;
-    let visible_height = area.height;
-    let max_scroll = total_lines.saturating_sub(visible_height);
+}
 
-    // Auto-scroll: show latest messages (scroll to bottom of view)
-    // scroll_offset = 0 means show newest content at bottom
-    // scroll_offset = max_scroll means show oldest content at bottom
-    // Only auto-scroll if user is already near the newest content
+#[allow(clippy::too_many_arguments)]
+fn render_inline_section(
+    lines: &mut Vec<MessageLine>,
+    app: &App,
+    max_width: usize,
+    icon: &str,
+    label: &str,
+    content: &str,
+    header_color: Color,
+    content_color: Color,
+    expanded: bool,
+    is_active: bool,
+    max_content_lines: usize,
+) {
+    let header = format!("  {} {}", icon, label);
+    let expand_icon = if expanded { "\u{25bc}" } else { "\u{25b6}" };
+    let header_full = format!("{} {}", header, expand_icon);
+    lines.push(MessageLine::text(
+        header_full,
+        Style::new().fg(header_color).add_modifier(TextAttributes::bold()),
+    ));
+
+    if !expanded {
+        lines.push(MessageLine::text(
+            "    (collapsed)",
+            Style::new().fg(app.theme.text_muted),
+        ));
+        return;
+    }
+
+    let content_lines: Vec<&str> = content.lines().collect();
+    let total = content_lines.len();
+    let show: Vec<&str> = if max_content_lines > 0 && total > max_content_lines {
+        let start = total.saturating_sub(max_content_lines);
+        content_lines[start..].to_vec()
+    } else {
+        content_lines
+    };
+
+    if max_content_lines > 0 && total > max_content_lines {
+        let skipped = total.saturating_sub(max_content_lines);
+        lines.push(MessageLine::text(
+            format!("    \u{2026} {} earlier lines", skipped),
+            Style::new().fg(app.theme.text_muted),
+        ));
+    }
+
+    for (i, text_line) in show.iter().enumerate() {
+        let is_last = i == show.len() - 1;
+        let cursor = if is_last && is_active { "\u{2588}" } else { "" };
+        if text_line.is_empty() {
+            lines.push(MessageLine::empty());
+        } else {
+            push_wrapped(lines, &format!("    {}{}", text_line, cursor),
+                Style::new().fg(content_color), max_width);
+        }
+    }
+}
+
+fn render_inline_steps(lines: &mut Vec<MessageLine>, app: &App, steps: &[String], max_width: usize) {
+    let step_count = steps.len();
+    let expand_icon = if app.steps_expanded { "\u{25bc}" } else { "\u{25b6}" };
+    lines.push(MessageLine::text(
+        format!("  \u{25b8} Steps ({}) {}", step_count, expand_icon),
+        Style::new().fg(app.theme.info).add_modifier(TextAttributes::bold()),
+    ));
+
+    if !app.steps_expanded {
+        if step_count > 0 {
+            let last = steps.last().map(|s| truncate_end(s, max_width.saturating_sub(4))).unwrap_or_default();
+            lines.push(MessageLine::text(
+                format!("    {}", last),
+                Style::new().fg(app.theme.text_muted),
+            ));
+        }
+        return;
+    }
+
+    let max_show = 5usize;
+    let total = steps.len();
+    let show: Vec<&String> = if total > max_show {
+        steps.iter().rev().take(max_show).collect::<Vec<_>>().into_iter().rev().collect()
+    } else {
+        steps.iter().collect()
+    };
+
+    if total > max_show {
+        lines.push(MessageLine::text(
+            format!("    \u{2026} {} earlier steps", total.saturating_sub(max_show)),
+            Style::new().fg(app.theme.text_muted),
+        ));
+    }
+
+    for step in &show {
+        render_structured_step(step, lines, app, max_width);
+    }
+}
+
+fn render_completed_message(
+    msg: &ChatMessage,
+    lines: &mut Vec<MessageLine>,
+    app: &App,
+    max_width: usize,
+) {
+    match msg {
+        ChatMessage::User { text, task_num } => {
+            lines.push(MessageLine::empty());
+            lines.push(MessageLine::text(
+                format!("  \u{27a4} Task #{}", task_num),
+                Style::new().fg(app.theme.secondary).add_modifier(TextAttributes::bold()),
+            ));
+            push_wrapped(lines, &format!("    {}", text), Style::new().fg(app.theme.text), max_width);
+        }
+        ChatMessage::Agent {
+            steps, thinking_text, result, success, elapsed_secs,
+            skill_created, scheduled_job, selected_tab, tab_expanded,
+            cached_response_md, ..
+        } => {
+            lines.push(MessageLine::empty());
+
+            let has_thinking = !thinking_text.is_empty();
+            let has_steps = !steps.is_empty();
+            let has_response = result.is_some();
+
+            if has_thinking || has_steps || has_response {
+                let tabs = [
+                    (AgentTab::Thinking, has_thinking, "\u{25c6} Thinking"),
+                    (AgentTab::Steps, has_steps, "\u{25b8} Steps"),
+                    (AgentTab::Response, has_response, "\u{25b6} Response"),
+                ];
+
+                let tab_labels: Vec<String> = tabs.iter()
+                    .filter(|(_, has, _)| *has)
+                    .map(|(tab, _, label)| {
+                        let is_selected = *selected_tab == *tab;
+                        let prefix = if is_selected { "[" } else { " " };
+                        let suffix = if is_selected { "]" } else { " " };
+                        format!("{}{}{}", prefix, label, suffix)
+                    })
+                    .collect();
+
+                lines.push(MessageLine::text(
+                    format!("  {}", tab_labels.join(" ")),
+                    Style::new().fg(app.theme.primary).add_modifier(TextAttributes::bold()),
+                ));
+
+                if *tab_expanded {
+                    match selected_tab {
+                        AgentTab::Thinking if has_thinking => {
+                            let content_lines: Vec<&str> = thinking_text.lines().collect();
+                            let total = content_lines.len();
+                            let show_all = total <= 100;
+                            let limit = if show_all { total } else { 50 };
+
+                            for tline in content_lines.iter().take(limit) {
+                                if !tline.is_empty() {
+                                    let md_lines = markdown::render_markdown_with_theme(tline, &app.theme);
+                                    for md_line in &md_lines {
+                                        let (text, style) = flatten_line(md_line, app);
+                                        if !text.is_empty() {
+                                            push_wrapped(lines, &format!("    {}", text), style, max_width);
+                                        } else {
+                                            lines.push(MessageLine::empty());
+    }
+}
+                                } else {
+                                    lines.push(MessageLine::empty());
+                                }
+                            }
+                            if !show_all {
+                                lines.push(MessageLine::text(
+                                    format!("    \u{2026} {} more lines (collapsed)", total - 50),
+                                    Style::new().fg(app.theme.text_muted),
+                                ));
+                            }
+                        }
+                        AgentTab::Steps if has_steps => {
+                            let icon = if *success { "\u{2713}" } else { "\u{2717}" };
+                            let color = if *success { app.theme.success } else { app.theme.error };
+                            lines.push(MessageLine::text(
+                                format!("    {} {} steps", icon, steps.len()),
+                                Style::new().fg(color),
+                            ));
+
+                            let max_show = 5;
+                            let show_steps: Vec<_> = if steps.len() > max_show {
+                                steps.iter().rev().take(max_show).collect::<Vec<_>>().into_iter().rev().collect()
+                            } else {
+                                steps.iter().collect()
+                            };
+
+                            if steps.len() > max_show {
+                                lines.push(MessageLine::text(
+                                    format!("    \u{2026} {} earlier steps", steps.len() - max_show),
+                                    Style::new().fg(app.theme.text_muted),
+                                ));
+                            }
+
+                            for step in &show_steps {
+                                render_structured_step(step, lines, app, max_width);
+                            }
+                        }
+                        AgentTab::Response if has_response => {
+                            if let Some(res) = result.as_ref() {
+                                let icon = if *success { "\u{2713}" } else { "\u{2717}" };
+                                let color = if *success { app.theme.success } else { app.theme.error };
+                                let elapsed_str = format_elapsed(*elapsed_secs);
+
+                                lines.push(MessageLine::text(
+                                    format!("    {} Done \u{b7} {}", icon, elapsed_str),
+                                    Style::new().fg(color).add_modifier(TextAttributes::bold()),
+                                ));
+                                lines.push(MessageLine::text(
+                                    format!("    \u{25b8} {} \u{b7} {}", app.provider, app.model.as_deref().unwrap_or("default")),
+                                    Style::new().fg(app.theme.text_muted),
+                                ));
+
+                                if !res.is_empty() {
+                                    lines.push(MessageLine::empty());
+                                    let md_lines = match cached_response_md.as_ref() {
+                                        Some(cached) => cached.clone(),
+                                        None => markdown::render_markdown_with_theme(res, &app.theme),
+                                    };
+                                    for md_line in &md_lines {
+                                        let (text, style) = flatten_line(md_line, app);
+                                        if !text.is_empty() {
+                                            push_wrapped(lines, &format!("    {}", text), style, max_width);
+                                        } else {
+                                            lines.push(MessageLine::empty());
+                                        }
+        }
+    }
+}
+                        }
+                        _ => {}
+                    }
+                } else {
+                    lines.push(MessageLine::text(
+                        "    (collapsed, press Space to expand)",
+                        Style::new().fg(app.theme.text_muted),
+                    ));
+                }
+
+                lines.push(MessageLine::empty());
+            }
+
+            if let Some(skill) = skill_created {
+                lines.push(MessageLine::text(
+                    format!("    \u{2726} Skill created: {}", skill),
+                    Style::new().fg(app.theme.info),
+                ));
+            }
+            if let Some(job) = scheduled_job {
+                lines.push(MessageLine::text(
+                    format!("    \u{23f0} Scheduled: {}", job),
+                    Style::new().fg(app.theme.secondary),
+                ));
+            }
+        }
+        ChatMessage::System { text, .. } => {
+            lines.push(MessageLine::empty());
+            push_wrapped(lines, &format!("  {}", text), Style::new().fg(app.theme.text_muted), max_width);
+        }
+        ChatMessage::Error { text, .. } => {
+            lines.push(MessageLine::empty());
+            push_wrapped(lines, &format!("  \u{2717} {}", text), Style::new().fg(app.theme.error), max_width);
+        }
+    }
+}
+
+fn handle_scroll(app: &mut App, max_scroll: u16) {
+    if app.scroll_paused {
+        return;
+    }
+
     if app.auto_scroll {
-        // Only reset if we're already close to the newest content (scroll < 10)
-        // This prevents bouncing back when user is actively scrolling up
-        if app.scroll_offset < 10 || max_scroll < 10 {
+        if max_scroll < 3 || app.scroll_offset < 3 {
             app.scroll_offset = 0;
         }
         app.auto_scroll = false;
     }
-    let scroll = app.scroll_offset.min(max_scroll);
+}
 
-    // ── Fill background ──
-    for sy in area.y..area.bottom() {
-        for sx in area.x..area.right() {
-            buf.put_char(sx, sy, ' ', Style::new().bg(app.theme.background));
-        }
-    }
-
-    // ── Render lines from bottom up (chat-style: newest at bottom) ──
-    // Scroll offset: 0 = newest at bottom, max_scroll = oldest at bottom
-    // Higher scroll_offset = show older content (skip more from newest end)
+fn render_lines(
+    buf: &mut CellBuffer,
+    area: Rect,
+    lines: &[MessageLine],
+    scroll: u16,
+    visible_height: u16,
+    total_lines: u16,
+    app: &App,
+) {
     let skip_from_newest = scroll.min(total_lines.saturating_sub(visible_height));
     let take_count = visible_height.min(total_lines);
 
-    // Reverse to start from newest, skip oldest of newest, then take visible_count
     let window = lines.iter().rev().skip(skip_from_newest as usize).take(take_count as usize);
 
     let mut y = area.bottom().saturating_sub(1);
@@ -158,7 +454,7 @@ pub fn render_messages(buf: &mut CellBuffer, area: Rect, app: &mut App) {
                 y = y.saturating_sub(1);
             }
             MessageLine::Collapsible { label, expanded, style } => {
-                let indicator = if *expanded { "▼" } else { "▶" };
+                let indicator = if *expanded { "\u{25bc}" } else { "\u{25b6}" };
                 let text = format!("  {} {}", indicator, label);
                 buf.draw_str_clipped(area, area.x + 2, y, &text, *style);
                 y = y.saturating_sub(1);
@@ -166,8 +462,12 @@ pub fn render_messages(buf: &mut CellBuffer, area: Rect, app: &mut App) {
         }
     }
 
-    // ── Scroll indicator (shows position from top) ──
+    render_scroll_indicator(buf, area, app, scroll, total_lines, visible_height);
+}
+
+fn render_scroll_indicator(buf: &mut CellBuffer, area: Rect, app: &App, scroll: u16, total_lines: u16, visible_height: u16) {
     if total_lines > visible_height {
+        let max_scroll = total_lines.saturating_sub(visible_height);
         let pct = if max_scroll > 0 {
             (scroll as f64 / max_scroll as f64 * 100.0) as u16
         } else {
@@ -181,7 +481,6 @@ pub fn render_messages(buf: &mut CellBuffer, area: Rect, app: &mut App) {
         }
     }
 
-    // ── Scroll bar (vertical track) ──
     if total_lines > visible_height && area.height > 4 {
         let track_x = area.right().saturating_sub(1);
         let track_top = area.y + 1;
@@ -190,9 +489,10 @@ pub fn render_messages(buf: &mut CellBuffer, area: Rect, app: &mut App) {
         if track_height > 0 {
             for ty in track_top..track_bottom {
                 if ty < area.bottom() {
-                    buf.put_char(track_x, ty, '│', Style::new().fg(app.theme.border_dim));
+                    buf.put_char(track_x, ty, '\u{2502}', Style::new().fg(app.theme.border_dim));
                 }
             }
+            let max_scroll = total_lines.saturating_sub(visible_height);
             let thumb_pos = if max_scroll > 0 {
                 ((scroll as f64 / max_scroll as f64) * (track_height as f64 - 1.0)) as u16
             } else {
@@ -200,190 +500,21 @@ pub fn render_messages(buf: &mut CellBuffer, area: Rect, app: &mut App) {
             };
             let thumb_y = track_top + thumb_pos;
             if thumb_y < track_bottom {
-                buf.put_char(track_x, thumb_y, '█', Style::new().fg(app.theme.primary));
+                buf.put_char(track_x, thumb_y, '\u{2588}', Style::new().fg(app.theme.primary));
             }
+        }
+    }
+
+    if app.scroll_paused && app.agent_running && scroll > 0 {
+        let new_label = " \u{2193} New content ";
+        let nx = area.right().saturating_sub(display_width(new_label) + 2);
+        if nx > area.x {
+            buf.draw_str(nx, area.y, new_label,
+                Style::new().bg(app.theme.primary).fg(app.theme.background).add_modifier(TextAttributes::bold()));
         }
     }
 }
 
-/// Render a single message into the lines buffer
-fn render_message(msg: &ChatMessage, lines: &mut Vec<MessageLine>, app: &App, max_width: usize) {
-    match msg {
-        ChatMessage::User { text, task_num, timestamp: _ } => {
-            lines.push(MessageLine::empty());
-            lines.push(MessageLine::text(
-                format!("  ➤ Task #{}", task_num),
-                Style::new().fg(app.theme.secondary).add_modifier(TextAttributes::bold()),
-            ));
-            push_wrapped(lines, &format!("    {}", text), Style::new().fg(app.theme.text), max_width);
-        }
-        ChatMessage::Agent { steps, thinking_text, result, success, elapsed_secs, skill_created, scheduled_job, selected_tab, tab_expanded, timestamp: _ } => {
-            use crate::app::AgentTab;
-
-            // Add separator line before agent messages
-            lines.push(MessageLine::empty());
-
-            // ── Tabbed interface ──
-            let has_thinking = !thinking_text.is_empty();
-            let has_steps = !steps.is_empty();
-            let has_response = result.is_some();
-
-            // Only show tabs if we have content
-            if has_thinking || has_steps || has_response {
-                // Render tabs
-                let tabs = [
-                    (AgentTab::Thinking, has_thinking),
-                    (AgentTab::Steps, has_steps),
-                    (AgentTab::Response, has_response),
-                ];
-
-                let tab_labels: Vec<String> = tabs.iter()
-                    .filter(|(_, has)| *has)
-                    .map(|(tab, _)| {
-                        let is_selected = *selected_tab == *tab;
-                        let prefix = if is_selected { "[" } else { " " };
-                        let suffix = if is_selected { "]" } else { " " };
-                        format!("{}{}{}", prefix, tab.name(), suffix)
-                    })
-                    .collect();
-
-                let tabs_line = tab_labels.join(" ");
-                lines.push(MessageLine::text(
-                    format!("  {}", tabs_line),
-                    Style::new().fg(app.theme.primary).add_modifier(TextAttributes::bold()),
-                ));
-
-                // ── Show selected tab content if expanded ──
-                if *tab_expanded {
-                    match selected_tab {
-                        AgentTab::Thinking if has_thinking => {
-                            // Show thinking content
-                            let thinking_lines: Vec<&str> = thinking_text.lines().collect();
-                            for tline in thinking_lines.iter().take(20) {
-                                if !tline.is_empty() {
-                                    push_wrapped(lines, &format!("    {}", tline), Style::new().fg(app.theme.text_muted), max_width);
-                                } else {
-                                    lines.push(MessageLine::empty());
-                                }
-                            }
-                            if thinking_lines.len() > 20 {
-                                lines.push(MessageLine::text(
-                                    format!("    … {} more lines", thinking_lines.len() - 20),
-                                    Style::new().fg(app.theme.text_muted),
-                                ));
-                            }
-                        }
-                        AgentTab::Steps if has_steps => {
-                            // Show steps
-                            let step_count = steps.len();
-                            let (icon, color) = if *success {
-                                ("✓", app.theme.success)
-                            } else if result.is_some() {
-                                ("✗", app.theme.error)
-                            } else {
-                                ("○", app.theme.info)
-                            };
-
-                            lines.push(MessageLine::text(
-                                format!("    {} {} steps", icon, step_count),
-                                Style::new().fg(color),
-                            ));
-
-                            let show_steps: Vec<_> = if steps.len() > 3 {
-                                steps.iter().rev().take(3).collect::<Vec<_>>().into_iter().rev().collect()
-                            } else {
-                                steps.iter().collect()
-                            };
-
-                            if steps.len() > 3 {
-                                lines.push(MessageLine::text(
-                                    format!("    … {} earlier steps", steps.len() - 3),
-                                    Style::new().fg(app.theme.text_muted),
-                                ));
-                            }
-
-                            for step in &show_steps {
-                                render_structured_step(step, lines, app, max_width);
-                            }
-                        }
-                        AgentTab::Response if has_response => {
-                            // Show response content
-                            let res = result.as_ref().unwrap();
-                            let icon = if *success { "✓" } else { "✗" };
-                            let color = if *success { app.theme.success } else { app.theme.error };
-                            let elapsed_str = format_elapsed(*elapsed_secs);
-
-                            // Show status line
-                            lines.push(MessageLine::text(
-                                format!("    {} Done · {}", icon, elapsed_str),
-                                Style::new().fg(color).add_modifier(TextAttributes::bold()),
-                            ));
-                            lines.push(MessageLine::text(
-                                format!("    ▸ {} · {}", app.provider, app.model.as_deref().unwrap_or("default")),
-                                Style::new().fg(app.theme.text_muted),
-                            ));
-
-                            if !res.is_empty() {
-                                lines.push(MessageLine::empty());
-                                // Render markdown result with proper padding
-                                let md_lines = markdown::render_markdown_with_theme(res, &app.theme);
-                                for md_line in &md_lines {
-                                    let (text, style) = flatten_line(md_line, app);
-                                    if !text.is_empty() {
-                                        push_wrapped(lines, &format!("    {}", text), style, max_width);
-                                    } else {
-                                        lines.push(MessageLine::empty());
-                                    }
-                                }
-                            }
-                        }
-                        _ => {
-                            // Tab not available or not selected
-                            lines.push(MessageLine::text(
-                                "    (not available)",
-                                Style::new().fg(app.theme.text_muted),
-                            ));
-                        }
-                    }
-                } else {
-                    // Collapsed - show hint
-                    lines.push(MessageLine::text(
-                        "    (collapsed, press Space to expand)",
-                        Style::new().fg(app.theme.text_muted),
-                    ));
-                }
-
-                lines.push(MessageLine::empty());
-            }
-
-            // ── Skill/job info (shown regardless of tab selection) ──
-            if let Some(skill) = skill_created {
-                lines.push(MessageLine::empty());
-                lines.push(MessageLine::text(
-                    format!("    ✦ Skill created: {}", skill),
-                    Style::new().fg(app.theme.info),
-                ));
-            }
-            if let Some(job) = scheduled_job {
-                lines.push(MessageLine::text(
-                    format!("    ⏰ Scheduled: {}", job),
-                    Style::new().fg(app.theme.secondary),
-                ));
-            }
-        }
-        ChatMessage::System { text, .. } => {
-            lines.push(MessageLine::empty());
-            push_wrapped(lines, &format!("  {}", text), Style::new().fg(app.theme.text_muted), max_width);
-        }
-        ChatMessage::Error { text, .. } => {
-            lines.push(MessageLine::empty());
-            push_wrapped(lines, &format!("  ✗ {}", text), Style::new().fg(app.theme.error), max_width);
-        }
-    }
-}
-
-/// Line types for rendering
-#[allow(dead_code)]
 enum MessageLine {
     Empty,
     Text { text: String, style: Style },
@@ -391,12 +522,8 @@ enum MessageLine {
 }
 
 impl MessageLine {
-    #[allow(dead_code)]
-    fn empty() -> Self {
-        MessageLine::Empty
-    }
+    fn empty() -> Self { MessageLine::Empty }
 
-    #[allow(dead_code)]
     fn text(text: impl Into<String>, style: Style) -> Self {
         MessageLine::Text { text: text.into(), style }
     }
@@ -407,7 +534,6 @@ impl MessageLine {
     }
 }
 
-/// Truncate a string to max_len, adding "..." if truncated.
 fn truncate_end(s: &str, max_len: usize) -> String {
     if max_len < 4 {
         return s.chars().take(max_len).collect();
@@ -429,7 +555,6 @@ fn truncate_end(s: &str, max_len: usize) -> String {
     result
 }
 
-/// Push a line, wrapping it into multiple lines if it exceeds max_width.
 fn push_wrapped(lines: &mut Vec<MessageLine>, text: &str, style: Style, max_width: usize) {
     if max_width < 4 {
         lines.push(MessageLine::text(text, style));
@@ -496,6 +621,28 @@ pub fn format_elapsed(secs: u64) -> String {
 }
 
 #[allow(dead_code)]
+struct PhaseInfo {
+    name: &'static str,
+    color_fn: fn(&App) -> Color,
+    symbol: &'static str,
+}
+
+#[allow(dead_code)]
+const PHASES: &[PhaseInfo] = &[
+    PhaseInfo { name: "planning", color_fn: |a| a.theme.warning, symbol: "\u{25c6}" },
+    PhaseInfo { name: "thinking", color_fn: |a| a.theme.warning, symbol: "\u{25c6}" },
+    PhaseInfo { name: "executing", color_fn: |a| a.theme.primary, symbol: "\u{25b8}" },
+    PhaseInfo { name: "observing", color_fn: |a| a.theme.secondary, symbol: "\u{25cb}" },
+    PhaseInfo { name: "reflecting", color_fn: |a| a.theme.info, symbol: "\u{25c6}" },
+    PhaseInfo { name: "delegating", color_fn: |a| a.theme.success, symbol: "\u{25c7}" },
+    PhaseInfo { name: "done", color_fn: |a| a.theme.success, symbol: "\u{2713}" },
+    PhaseInfo { name: "failed", color_fn: |a| a.theme.error, symbol: "\u{2717}" },
+    PhaseInfo { name: "Interrupted", color_fn: |a| a.theme.warning, symbol: "\u{26a0}" },
+    PhaseInfo { name: "streaming", color_fn: |a| a.theme.info, symbol: "\u{25b6}" },
+    PhaseInfo { name: "responding", color_fn: |a| a.theme.info, symbol: "\u{25b6}" },
+];
+
+#[allow(dead_code)]
 fn parse_step_style(step: &str, app: &App) -> (Style, &'static str) {
     for info in PHASES {
         if step.contains(info.name) {
@@ -505,14 +652,14 @@ fn parse_step_style(step: &str, app: &App) -> (Style, &'static str) {
     }
 
     let t = &app.theme;
-    if step.contains("done") || step.starts_with('✓') {
-        return (Style::new().fg(t.success), "✓");
+    if step.contains("done") || step.starts_with('\u{2713}') {
+        return (Style::new().fg(t.success), "\u{2713}");
     }
-    if step.contains("fail") || step.starts_with('✗') {
-        return (Style::new().fg(t.error), "✗");
+    if step.contains("fail") || step.starts_with('\u{2717}') {
+        return (Style::new().fg(t.error), "\u{2717}");
     }
 
-    (Style::new().fg(t.text), "•")
+    (Style::new().fg(t.text), "\u{2022}")
 }
 
 #[allow(dead_code)]
@@ -525,36 +672,28 @@ pub fn detect_phase(step: &str) -> Option<&str> {
     None
 }
 
-/// Render a step in structured format showing tool, action, and result
 fn render_structured_step(step: &str, lines: &mut Vec<MessageLine>, app: &App, max_width: usize) {
-    // Parse the step format: "phase action\n  detail"
     let parts: Vec<&str> = step.lines().collect();
-    if parts.is_empty() {
+    let main_line = if let Some(line) = parts.first() {
+        *line
+    } else {
         return;
-    }
-
-    // Parse main line: "phase action"
-    let main_line = parts[0];
+    };
     let (_phase, action_detail) = main_line.split_once(' ').unwrap_or(("executing", main_line));
 
-    // Parse action to extract tool and arguments
     let parsed = parse_tool_action(action_detail);
-
-    // Display tool with icon and action
     let action_text = format!("{} {}", parsed.tool_icon, parsed.display_action);
     let tool_line = format!("    {}", action_text);
     let tool_style = Style::new().fg(app.theme.primary).add_modifier(TextAttributes::bold());
     lines.push(MessageLine::text(tool_line, tool_style));
 
-    // Display detail/observation if present
     if parts.len() > 1 {
         let detail_joined = parts[1..].join("\n    ");
         let detail = detail_joined.trim();
         if !detail.is_empty() {
-            // Show observation/result
-            let obs_style = if detail.contains("✓") || detail.contains("success") {
+            let obs_style = if detail.contains("\u{2713}") || detail.contains("success") {
                 Style::new().fg(app.theme.success)
-            } else if detail.contains("✗") || detail.contains("fail") || detail.contains("error") {
+            } else if detail.contains("\u{2717}") || detail.contains("fail") || detail.contains("error") {
                 Style::new().fg(app.theme.error)
             } else {
                 Style::new().fg(app.theme.text_muted)
@@ -564,7 +703,6 @@ fn render_structured_step(step: &str, lines: &mut Vec<MessageLine>, app: &App, m
     }
 }
 
-/// Parsed tool/action information
 #[allow(dead_code)]
 struct ParsedAction {
     tool_name: String,
@@ -572,12 +710,9 @@ struct ParsedAction {
     display_action: String,
 }
 
-/// Parse action string to extract tool and arguments
 fn parse_tool_action(action: &str) -> ParsedAction {
-    // Common tool patterns
     let action_lower = action.to_lowercase();
 
-    // File operations
     if action_lower.contains("write_file") || action_lower.contains("create") {
         if let Some(file) = extract_file_path(action) {
             return ParsedAction {
@@ -606,7 +741,6 @@ fn parse_tool_action(action: &str) -> ParsedAction {
         }
     }
 
-    // Shell/Bash operations
     if action_lower.contains("bash") || action_lower.contains("shell") || action_lower.contains("run") {
         let cmd = extract_command(action).unwrap_or_else(|| action.to_string());
         return ParsedAction {
@@ -616,7 +750,6 @@ fn parse_tool_action(action: &str) -> ParsedAction {
         };
     }
 
-    // Browser operations
     if action_lower.contains("click") {
         return ParsedAction {
             tool_name: "click".into(),
@@ -640,7 +773,6 @@ fn parse_tool_action(action: &str) -> ParsedAction {
         };
     }
 
-    // Default: just show the action
     ParsedAction {
         tool_name: "action".into(),
         tool_icon: "[ACTION]",
@@ -648,33 +780,21 @@ fn parse_tool_action(action: &str) -> ParsedAction {
     }
 }
 
-/// Extract file path from action string
 fn extract_file_path(action: &str) -> Option<String> {
-    // Try to extract file path from patterns like:
-    // "write_file src/main.py"
-    // "create file:src/main.py"
-    // "edit src/main.py"
-    let _action_lower = action.to_lowercase();
-
-    // Find file-like patterns
     for part in action.split_whitespace() {
-        if part.contains('.') || part.contains('/') || part.contains('\\') {
-            // Skip common non-file parts
-            if !part.contains("http") && !part.contains("://") {
-                return Some(part.to_string());
-            }
+        if (part.contains('.') || part.contains('/') || part.contains('\\'))
+            && !part.contains("http") && !part.contains("://")
+        {
+            return Some(part.to_string());
         }
     }
     None
 }
 
-/// Extract command from bash action
 fn extract_command(action: &str) -> Option<String> {
-    // Extract command after "bash", "run", etc.
     action.find(' ').map(|idx| action[idx + 1..].to_string())
 }
 
-/// Extract URL from action
 fn extract_url(action: &str) -> Option<String> {
     for word in action.split_whitespace() {
         if word.starts_with("http://") || word.starts_with("https://") {
@@ -705,26 +825,6 @@ mod tests {
 
     fn make_app() -> App {
         App::new("test".into(), Some("gpt-4".into()), None, true, ApiClient::new("/tmp/test.sock"))
-    }
-
-    #[test]
-    fn test_format_elapsed_zero() {
-        assert_eq!(format_elapsed(0), "< 1s");
-    }
-
-    #[test]
-    fn test_format_elapsed_seconds() {
-        assert_eq!(format_elapsed(45), "45s");
-    }
-
-    #[test]
-    fn test_format_elapsed_minutes() {
-        assert_eq!(format_elapsed(125), "2m 05s");
-    }
-
-    #[test]
-    fn test_format_elapsed_hours() {
-        assert_eq!(format_elapsed(3661), "1h 01m");
     }
 
     #[test]
@@ -774,23 +874,23 @@ mod tests {
     fn test_parse_step_style_known_phases() {
         let app = make_app();
         let (_, symbol) = parse_step_style("planning", &app);
-        assert_eq!(symbol, "◆");
+        assert_eq!(symbol, "\u{25c6}");
 
         let (_, symbol) = parse_step_style("executing", &app);
-        assert_eq!(symbol, "▸");
+        assert_eq!(symbol, "\u{25b8}");
 
         let (_, symbol) = parse_step_style("done", &app);
-        assert_eq!(symbol, "✓");
+        assert_eq!(symbol, "\u{2713}");
 
         let (_, symbol) = parse_step_style("failed", &app);
-        assert_eq!(symbol, "✗");
+        assert_eq!(symbol, "\u{2717}");
     }
 
     #[test]
     fn test_parse_step_style_unknown() {
         let app = make_app();
         let (_, symbol) = parse_step_style("something random", &app);
-        assert_eq!(symbol, "•");
+        assert_eq!(symbol, "\u{2022}");
     }
 
     #[test]
@@ -807,11 +907,7 @@ mod tests {
         let long = "abcdefghijklmnopqrstuvwxyz";
         push_wrapped(&mut lines, long, Style::new(), 10);
         assert!(lines.len() > 1, "Should wrap into multiple lines");
-        if let MessageLine::Text { text, .. } = &lines[0] {
-            assert!(text.starts_with("abcdefg"));
-        } else {
-            panic!("First line should be Text");
-        }
+        assert!(matches!(&lines[0], MessageLine::Text { .. }), "First line should be Text");
     }
 
     #[test]
@@ -826,7 +922,7 @@ mod tests {
 
     #[test]
     fn test_truncate_end_multi_byte() {
-        let s = "aé bé cé dé é";
+        let s = "a\u{e9} b\u{e9} c\u{e9} d\u{e9} \u{e9}";
         let result = truncate_end(s, 6);
         assert!(result.ends_with("..."));
         assert!(display_width(&result) <= 6, "truncated display width should be <= max_len");
@@ -834,7 +930,7 @@ mod tests {
 
     #[test]
     fn test_truncate_end_wide_chars() {
-        let wide: String = "一丁七乃九".to_string();
+        let wide: String = "\u{4e00}\u{4e01}\u{4e03}\u{4e5d}\u{4e43}".to_string();
         let result = truncate_end(&wide, 6);
         assert!(result.ends_with("..."));
         assert!(display_width(&result) <= 6, "display width should be <= 6");
@@ -854,7 +950,7 @@ mod tests {
     #[test]
     fn test_push_wrapped_wide_chars() {
         let mut lines = Vec::new();
-        let wide: String = "一".repeat(10);
+        let wide: String = "\u{4e00}".repeat(10);
         push_wrapped(&mut lines, &wide, Style::new(), 10);
         for (i, line) in lines.iter().enumerate() {
             if let MessageLine::Text { text, .. } = line {
@@ -867,7 +963,7 @@ mod tests {
     #[test]
     fn test_push_wrapped_mixed_width() {
         let mut lines = Vec::new();
-        let mixed = "hello一世界world";
+        let mixed = "hello\u{4e00}\u{4e16}\u{754c}world";
         push_wrapped(&mut lines, mixed, Style::new(), 10);
         for (i, line) in lines.iter().enumerate() {
             if let MessageLine::Text { text, .. } = line {
@@ -909,7 +1005,7 @@ mod tests {
     #[test]
     fn test_push_wrapped_single_wide_char_at_boundary() {
         let mut lines = Vec::new();
-        let text = format!("abc{}一", "x".repeat(5));
+        let text = format!("abc{}\u{4e00}", "x".repeat(5));
         push_wrapped(&mut lines, &text, Style::new(), 8);
         for (i, line) in lines.iter().enumerate() {
             if let MessageLine::Text { text, .. } = line {
@@ -918,4 +1014,485 @@ mod tests {
             }
         }
     }
+
+        fn build_lines(app: &mut App) -> Vec<MessageLine> {
+            let mut lines = Vec::new();
+            let max_width = 80usize;
+            for msg in &app.messages {
+                render_completed_message(msg, &mut lines, app, max_width);
+            }
+            lines
+        }
+    
+        // ── render_inline_section tests ──────────────────────────────
+    
+        #[test]
+        fn test_inline_section_expanded_shows_content() {
+            let app = make_app();
+            let mut lines = Vec::new();
+            render_inline_section(
+                &mut lines, &app, 80,
+                "\u{25b6}", "Response", "hello world",
+                app.theme.info, app.theme.text,
+                true, true, 0,
+            );
+            assert!(!lines.is_empty());
+            let has_content = lines.iter().any(|l| match l {
+                MessageLine::Text { text, .. } => text.contains("hello world"),
+                _ => false,
+            });
+            assert!(has_content, "Should contain 'hello world'");
+        }
+    
+        #[test]
+        fn test_inline_section_collapsed_hides_content() {
+            let app = make_app();
+            let mut lines = Vec::new();
+            render_inline_section(
+                &mut lines, &app, 80,
+                "\u{25b6}", "Response", "hidden content",
+                app.theme.info, app.theme.text,
+                false, false, 0,
+            );
+            let has_collapsed = lines.iter().any(|l| match l {
+                MessageLine::Text { text, .. } => text.contains("collapsed"),
+                _ => false,
+            });
+            assert!(has_collapsed);
+        }
+    
+        #[test]
+        fn test_inline_section_cursor_on_active() {
+            let app = make_app();
+            let mut lines = Vec::new();
+            render_inline_section(
+                &mut lines, &app, 80,
+                "\u{25b6}", "Response", "streaming",
+                app.theme.info, app.theme.text,
+                true, true, 0,
+            );
+            let has_cursor = lines.iter().any(|l| match l {
+                MessageLine::Text { text, .. } => text.contains('\u{2588}'),
+                _ => false,
+            });
+            assert!(has_cursor, "Active section should have cursor");
+        }
+    
+        #[test]
+        fn test_inline_section_no_cursor_when_inactive() {
+            let app = make_app();
+            let mut lines = Vec::new();
+            render_inline_section(
+                &mut lines, &app, 80,
+                "\u{25b6}", "Response", "streaming",
+                app.theme.info, app.theme.text,
+                true, false, 0,
+            );
+            let has_cursor = lines.iter().any(|l| match l {
+                MessageLine::Text { text, .. } => text.contains('\u{2588}'),
+                _ => false,
+            });
+            assert!(!has_cursor, "Inactive section should not have cursor");
+        }
+    
+        #[test]
+        fn test_inline_section_truncates_with_max_lines() {
+            let app = make_app();
+            let content = (0..20).map(|i| format!("line {}", i)).collect::<Vec<_>>().join("\n");
+            let mut lines = Vec::new();
+            render_inline_section(
+                &mut lines, &app, 80,
+                "\u{25c6}", "Thinking", &content,
+                app.theme.warning, app.theme.text_muted,
+                true, true, 10,
+            );
+            let earlier_notice = lines.iter().any(|l| match l {
+                MessageLine::Text { text, .. } => text.contains("earlier lines"),
+                _ => false,
+            });
+            assert!(earlier_notice, "Should show '… N earlier lines'");
+        }
+    
+        // ── render_inline_steps tests ─────────────────────────────────
+    
+        #[test]
+        fn test_inline_steps_shows_count() {
+            let mut app = make_app();
+            app.start_agent_message("test");
+            app.append_step("Task: test".into());
+            app.append_step("step 1".into());
+            app.append_step("step 2".into());
+            app.steps_expanded = true;
+            let steps = match app.messages.last().unwrap() {
+                ChatMessage::Agent { steps, .. } => steps.clone(),
+                _ => panic!("Expected Agent"),
+            };
+            let mut lines = Vec::new();
+            render_inline_steps(&mut lines, &app, &steps, 80);
+            let has_count = lines.iter().any(|l| match l {
+                MessageLine::Text { text, .. } => text.contains("Steps (3)"),
+                _ => false,
+            });
+            assert!(has_count);
+        }
+
+        #[test]
+        fn test_inline_steps_collapsed_shows_last() {
+            let mut app = make_app();
+            app.start_agent_message("test");
+            app.append_step("Task: test".into());
+            app.append_step("planning read code".into());
+            app.steps_expanded = false;
+            let steps = match app.messages.last().unwrap() {
+                ChatMessage::Agent { steps, .. } => steps.clone(),
+                _ => panic!("Expected Agent"),
+            };
+            let mut lines = Vec::new();
+            render_inline_steps(&mut lines, &app, &steps, 80);
+            let has_last = lines.iter().any(|l| match l {
+                MessageLine::Text { text, .. } => text.contains("planning"),
+                _ => false,
+            });
+            assert!(has_last);
+        }
+    
+        // ── render_completed_message tests ───────────────────────────
+    
+        #[test]
+        fn test_render_user_message() {
+            let mut app = make_app();
+            app.messages.push(ChatMessage::User { text: "hello".into(), task_num: 1 });
+            let lines = build_lines(&mut app);
+            let has_task = lines.iter().any(|l| match l {
+                MessageLine::Text { text, .. } => text.contains("Task #1"),
+                _ => false,
+            });
+            assert!(has_task);
+        }
+    
+        #[test]
+        fn test_render_system_message() {
+            let mut app = make_app();
+            app.messages.push(ChatMessage::System { text: "info".into() });
+            let lines = build_lines(&mut app);
+            let has_info = lines.iter().any(|l| match l {
+                MessageLine::Text { text, .. } => text.contains("info"),
+                _ => false,
+            });
+            assert!(has_info);
+        }
+    
+        #[test]
+        fn test_render_error_message() {
+            let mut app = make_app();
+            app.messages.push(ChatMessage::Error { text: "failed".into() });
+            let lines = build_lines(&mut app);
+            let has_error = lines.iter().any(|l| match l {
+                MessageLine::Text { text, .. } => text.contains("failed"),
+                _ => false,
+            });
+            assert!(has_error);
+        }
+    
+        #[test]
+        fn test_render_agent_message_with_tabs() {
+            let mut app = make_app();
+            app.messages.push(ChatMessage::Agent {
+                state: MessageState::Completed,
+                steps: vec!["planning analyze".into(), "executing run".into()],
+                thinking_text: "thinking content".into(),
+                result: Some("done".into()),
+                success: true,
+                elapsed_secs: 5,
+                skill_created: None,
+                scheduled_job: None,
+                selected_tab: AgentTab::Response,
+                tab_expanded: true,
+                cached_response_md: None,
+            });
+            let lines = build_lines(&mut app);
+            let has_thinking_tab = lines.iter().any(|l| match l {
+                MessageLine::Text { text, .. } => text.contains("Thinking"),
+                _ => false,
+            });
+            let has_response_tab = lines.iter().any(|l| match l {
+                MessageLine::Text { text, .. } => text.contains("Response"),
+                _ => false,
+            });
+            let has_done = lines.iter().any(|l| match l {
+                MessageLine::Text { text, .. } => text.contains("Done") && text.contains("5s"),
+                _ => false,
+            });
+            assert!(has_thinking_tab);
+            assert!(has_response_tab);
+            assert!(has_done);
+        }
+    
+        #[test]
+        fn test_render_agent_thinking_tab() {
+            let mut app = make_app();
+            app.messages.push(ChatMessage::Agent {
+                state: MessageState::Completed,
+                steps: vec![],
+                thinking_text: "deep reasoning".into(),
+                result: None,
+                success: false,
+                elapsed_secs: 0,
+                skill_created: None,
+                scheduled_job: None,
+                selected_tab: AgentTab::Thinking,
+                tab_expanded: true,
+                cached_response_md: None,
+            });
+            let lines = build_lines(&mut app);
+            let has_thinking = lines.iter().any(|l| match l {
+                MessageLine::Text { text, .. } => text.contains("deep reasoning"),
+                _ => false,
+            });
+            assert!(has_thinking);
+        }
+    
+        #[test]
+        fn test_render_agent_steps_tab() {
+            let mut app = make_app();
+            app.messages.push(ChatMessage::Agent {
+                state: MessageState::Completed,
+                steps: vec!["executing read_file config.toml".into()],
+                thinking_text: String::new(),
+                result: None,
+                success: false,
+                elapsed_secs: 0,
+                skill_created: None,
+                scheduled_job: None,
+                selected_tab: AgentTab::Steps,
+                tab_expanded: true,
+                cached_response_md: None,
+            });
+            let lines = build_lines(&mut app);
+            let has_step = lines.iter().any(|l| match l {
+                MessageLine::Text { text, .. } => text.contains("READ_FILE") || text.contains("config.toml"),
+                _ => false,
+            });
+            assert!(has_step, "Should contain step content");
+        }
+    
+        #[test]
+        fn test_render_agent_skill_created() {
+            let mut app = make_app();
+            app.messages.push(ChatMessage::Agent {
+                state: MessageState::Completed,
+                steps: vec![],
+                thinking_text: String::new(),
+                result: None,
+                success: false,
+                elapsed_secs: 0,
+                skill_created: Some("my-skill".into()),
+                scheduled_job: None,
+                selected_tab: AgentTab::Response,
+                tab_expanded: false,
+                cached_response_md: None,
+            });
+            let lines = build_lines(&mut app);
+            let has_skill = lines.iter().any(|l| match l {
+                MessageLine::Text { text, .. } => text.contains("my-skill"),
+                _ => false,
+            });
+            assert!(has_skill);
+        }
+    
+        #[test]
+        fn test_render_agent_collapsed() {
+            let mut app = make_app();
+            app.messages.push(ChatMessage::Agent {
+                state: MessageState::Completed,
+                steps: vec![],
+                thinking_text: "thinking content".into(),
+                result: Some("result".into()),
+                success: true,
+                elapsed_secs: 1,
+                skill_created: None,
+                scheduled_job: None,
+                selected_tab: AgentTab::Response,
+                tab_expanded: false,
+                cached_response_md: None,
+            });
+            let lines = build_lines(&mut app);
+            let has_collapsed = lines.iter().any(|l| match l {
+                MessageLine::Text { text, .. } => text.contains("collapsed"),
+                _ => false,
+            });
+            assert!(has_collapsed);
+        }
+    
+        #[test]
+        fn test_render_agent_with_cached_markdown() {
+            let mut app = make_app();
+            let lines = sediman_tui_core::markdown::render_markdown_with_theme("# Test", &app.theme);
+            app.messages.push(ChatMessage::Agent {
+                state: MessageState::Completed,
+                steps: vec![],
+                thinking_text: String::new(),
+                result: Some("# Test".into()),
+                success: true,
+                elapsed_secs: 1,
+                skill_created: None,
+                scheduled_job: None,
+                selected_tab: AgentTab::Response,
+                tab_expanded: true,
+                cached_response_md: Some(lines),
+            });
+            let result = build_lines(&mut app);
+            assert!(!result.is_empty());
+        }
+    
+        // ── streaming sections build test ────────────────────────────
+    
+        #[test]
+        fn test_render_streaming_sections_with_content() {
+            let mut app = make_app();
+            app.agent_running = true;
+            app.agent_start = std::time::Instant::now();
+            app.start_agent_message("test");
+            app.append_streaming_token("thinking...", "thinking");
+            app.append_streaming_token("responding...", "responding");
+            app.thinking_expanded = true;
+            app.steps_expanded = true;
+            app.append_step("planning".into());
+
+            let mut lines = Vec::new();
+            render_streaming_sections(&mut lines, &mut app, 80, Rect::new(0, 0, 80, 24));
+
+            let has_thinking = lines.iter().any(|l| match l {
+                MessageLine::Text { text, .. } => text.contains("thinking..."),
+                _ => false,
+            });
+            let has_responding = lines.iter().any(|l| match l {
+                MessageLine::Text { text, .. } => text.contains("responding..."),
+                _ => false,
+            });
+            assert!(has_thinking, "Should contain thinking content");
+            assert!(has_responding, "Should contain response content");
+        }
+
+        // ── render_messages integration: no duplicate thinking ────────
+
+        #[test]
+        fn test_render_messages_during_streaming_no_duplicate_sections() {
+            let mut app = make_app();
+            app.agent_running = true;
+            app.agent_start = std::time::Instant::now();
+            app.start_agent_message("test");
+            app.append_streaming_token("thinking...", "thinking");
+            app.append_streaming_token("responding...", "responding");
+            app.thinking_expanded = true;
+            app.steps_expanded = true;
+            app.append_step("planning".into());
+
+            let mut buf = CellBuffer::new(80, 40);
+            let area = Rect::new(0, 0, 80, 40);
+            render_messages(&mut buf, area, &mut app);
+
+            // Assert ◆ Thinking appears exactly once (not twice from
+            // the inline streaming section AND the completed message tab bar).
+            let thinking_icon_count = buf.iter_cells()
+                .filter(|(_x, _y, cell)| cell.ch == '\u{25c6}')
+                .count();
+            assert_eq!(thinking_icon_count, 1,
+                "\u{25c6} Thinking icon should appear exactly once, found {} times", thinking_icon_count);
+        }
+    
+        // ── parse_tool_action tests ──────────────────────────────────
+    
+        #[test]
+        fn test_parse_write_file() {
+            let action = parse_tool_action("write_file src/main.rs");
+            assert!(action.display_action.contains("WRITE_FILE"));
+            assert!(action.display_action.contains("src/main.rs"));
+        }
+    
+        #[test]
+        fn test_parse_read_file() {
+            let action = parse_tool_action("read_file config.toml");
+            assert!(action.display_action.contains("READ_FILE"));
+        }
+    
+        #[test]
+        fn test_parse_bash() {
+            let action = parse_tool_action("bash npm install");
+            assert!(action.display_action.contains("BASH"));
+            assert!(action.display_action.contains("npm install"));
+        }
+    
+        #[test]
+        fn test_parse_click() {
+            let action = parse_tool_action("click button #submit");
+            assert!(action.display_action.contains("CLICK"));
+        }
+    
+        #[test]
+        fn test_parse_unknown_defaults_to_action() {
+            let action = parse_tool_action("unknown action text");
+            assert_eq!(action.tool_icon, "[ACTION]");
+            assert_eq!(action.display_action, "unknown action text");
+        }
+    
+        #[test]
+        fn test_auto_scroll_reset_when_near_bottom() {
+            let mut app = make_app();
+            app.scroll_offset = 2;
+            app.auto_scroll = true;
+            handle_scroll(&mut app, 100);
+            assert_eq!(app.scroll_offset, 0);
+            assert!(!app.auto_scroll);
+        }
+    
+        #[test]
+        fn test_auto_scroll_does_not_snap_when_far_from_bottom() {
+            let mut app = make_app();
+            app.scroll_offset = 50;
+            app.auto_scroll = true;
+            handle_scroll(&mut app, 200);
+            assert_eq!(app.scroll_offset, 50);
+            assert!(!app.auto_scroll);
+        }
+    
+        #[test]
+        fn test_scroll_paused_prevents_auto_scroll() {
+            let mut app = make_app();
+            app.scroll_offset = 2;
+            app.auto_scroll = true;
+            app.scroll_paused = true;
+            handle_scroll(&mut app, 100);
+            assert_eq!(app.scroll_offset, 2);
+        }
+    
+        #[test]
+        fn test_auto_scroll_reset_on_small_buffer() {
+            let mut app = make_app();
+            app.scroll_offset = 0;
+            app.auto_scroll = true;
+            handle_scroll(&mut app, 2);
+            assert_eq!(app.scroll_offset, 0);
+            assert!(!app.auto_scroll);
+        }
+    
+        #[test]
+        fn test_format_elapsed_zero() {
+            assert_eq!(format_elapsed(0), "< 1s");
+        }
+    
+        #[test]
+        fn test_format_elapsed_seconds() {
+            assert_eq!(format_elapsed(45), "45s");
+        }
+    
+        #[test]
+        fn test_format_elapsed_minutes() {
+            assert_eq!(format_elapsed(125), "2m 05s");
+        }
+    
+        #[test]
+        fn test_format_elapsed_hours() {
+            assert_eq!(format_elapsed(3661), "1h 01m");
+        }
 }

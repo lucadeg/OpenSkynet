@@ -20,7 +20,6 @@ pub async fn handle_slash(app: &mut App, input: &str) {
         }
         "reset" => {
             app.messages.clear();
-            app.step_log.clear();
             app.agent_running = false;
             app.add_system_message("Reset complete.".into());
         }
@@ -61,6 +60,9 @@ pub async fn handle_slash(app: &mut App, input: &str) {
         }
         "coder" => {
             crate::commands::coder::handle_coder(app, rest).await;
+        }
+        "terminator" => {
+            crate::commands::terminator::handle_terminator(app, rest).await;
         }
         "search" => {
             crate::commands::search::handle_search(app, rest).await;

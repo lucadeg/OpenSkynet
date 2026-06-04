@@ -121,40 +121,14 @@ pub async fn handle_session_browser(app: &mut App, key: crossterm::event::KeyEve
             true
         }
         KeyCode::Backspace | KeyCode::Delete => {
-            if app.session_filter.is_empty() {
-                // Delete selected session
-                let filtered: Vec<&sediman_tui_bridge::SessionInfo> = app.session_list
-                    .iter()
-                    .filter(|s| {
-                        if query.is_empty() { return true; }
-                        let searchable = format!("{} {}", s.task, s.id).to_lowercase();
-                        searchable.contains(&query)
-                    })
-                    .collect();
-                if let Some(session) = filtered.get(app.session_selected) {
-                    let sid = session.id.clone();
-                    match app.bridge.delete_session(&sid).await {
-                        Ok(()) => {
-                            app.add_system_message(format!("Deleted session #{}", sid));
-                            if app.session_selected > 0 {
-                                app.session_selected -= 1;
-                            }
-                            if let Ok(sessions) = app.bridge.get_sessions().await {
-                                app.session_list = sessions;
-                            }
-                        }
-                        Err(e) => app.add_error_message(format!("Failed to delete: {}", e)),
-                    }
-                }
-            } else {
+            if !app.session_filter.is_empty() {
                 app.session_filter.pop();
                 app.session_selected = 0;
             }
             true
         }
         KeyCode::Tab => {
-            app.session_filter.push('\t');
-            app.session_selected = 0;
+            // Ignore Tab - used for UI navigation elsewhere
             true
         }
         KeyCode::Char(c) => {

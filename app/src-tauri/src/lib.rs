@@ -2,6 +2,8 @@
 
 use tauri::Manager;
 
+mod websocket_proxy;
+
 #[tauri::command]
 fn get_app_version() -> String {
     env!("CARGO_PKG_VERSION").to_string()
@@ -31,6 +33,14 @@ fn ensure_config_dir(app_handle: tauri::AppHandle) -> Result<bool, String> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Start WebSocket proxy in background
+    let socket_path = std::env::var("SEDIMAN_PYTHON_SOCKET")
+        .unwrap_or_else(|_| "/tmp/sediman-python.sock".to_string());
+
+    tokio::spawn(async move {
+        websocket_proxy::run_websocket_proxy(socket_path).await;
+    });
+
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .invoke_handler(tauri::generate_handler![

@@ -19,7 +19,7 @@ impl PermissionManager {
         if self.plan_mode {
             "plan"
         } else {
-            PERMISSION_MODES[self.mode_idx]
+            PERMISSION_MODES.get(self.mode_idx).copied().unwrap_or("ask")
         }
     }
 

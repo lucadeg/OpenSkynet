@@ -81,27 +81,12 @@ pub async fn handle_schedule_browser(app: &mut App, key: crossterm::event::KeyEv
             true
         }
         KeyCode::Backspace | KeyCode::Delete => {
-            if app.schedule_input.is_empty() {
-                // Delete selected job
-                if let Some(job) = app.schedule_jobs.get(app.schedule_selected).cloned() {
-                    match app.bridge.remove_schedule(&job.id).await {
-                        Ok(_) => {
-                            app.add_system_message(format!("Deleted: {}", job.task));
-                            if app.schedule_selected > 0 { app.schedule_selected -= 1; }
-                            if let Ok(jobs) = app.bridge.list_schedules().await {
-                                app.schedule_jobs = jobs;
-                            }
-                        }
-                        Err(e) => app.add_error_message(format!("Failed: {}", e)),
-                    }
-                }
-            } else {
+            if !app.schedule_input.is_empty() {
                 app.schedule_input.pop();
             }
             true
         }
         KeyCode::Tab => {
-            app.schedule_input.push('\t');
             true
         }
         KeyCode::Char(c) => {
