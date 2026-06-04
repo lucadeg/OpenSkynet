@@ -41,3 +41,4 @@ class AgentResult:
     schedule_cron: str | None = None
     iterations: int = 0
     strategy_used: str = "direct"
+    success: bool = True

@@ -64,6 +64,7 @@ class CodingAgent:
         hooks: HookPipeline | None = None,
         enable_hooks: bool = True,
         conversation_history: list[dict[str, Any]] | None = None,
+        system_prompt_override: str | None = None,
     ):
         self.llm = llm_provider
         self.registry = tool_registry or create_coding_tool_registry()
@@ -89,6 +90,7 @@ class CodingAgent:
         self._session_id = str(int(time.time() * 1000))[-8:]
         self._conversation_history: list[dict[str, Any]] = list(conversation_history or [])
         self._pending_inline_feedback: list[str] = []
+        self._system_prompt_override = system_prompt_override
 
     def _emit_step(self, action: str, detail: str = "") -> None:
         if self._on_step:
@@ -137,7 +139,7 @@ class CodingAgent:
 
         self._emit_step("coding: analyzing", detail=task[:100])
 
-        system_prompt = build_system_prompt(
+        system_prompt = self._system_prompt_override or build_system_prompt(
             project_info=self.project,
             task=task,
         )

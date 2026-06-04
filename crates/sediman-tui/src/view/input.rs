@@ -10,7 +10,7 @@ pub fn render_input(buf: &mut CellBuffer, area: Rect, app: &mut App) {
         AgentMode::Coder => t.warning,
         AgentMode::Terminator => t.error,
     };
-    let mode_label = app.agent_mode.label();
+    let mode_label = app.current_mode_label();
 
     // ── Row 0: Muted separator ──
     let sep_y = area.y;

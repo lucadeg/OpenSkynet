@@ -25,10 +25,10 @@ pub async fn handle_task(app: &mut App, task: &str, event_tx: &mpsc::UnboundedSe
         return;
     }
 
-    let mode = match app.agent_mode {
-        crate::app::AgentMode::Browser => "browser",
-        crate::app::AgentMode::Coder => "coder",
-        _ => "manager",
+    let mode: String = match app.agent_mode {
+        crate::app::AgentMode::Browser => "browser".into(),
+        crate::app::AgentMode::Coder => "coder".into(),
+        _ => app.current_mode_name().to_string(),
     };
 
     app.show_banner = false;
@@ -736,5 +736,150 @@ mod tests {
         let tx = test_event_tx();
         handle_task(&mut app, "browse", &tx).await;
         assert!(!app.interrupt.is_triggered());
+    }
+
+    // ── Dynamic mode tests ──────────────────────────────────────────
+
+    #[test]
+    fn test_default_agent_modes_has_four() {
+        let modes = crate::app::default_agent_modes();
+        assert_eq!(modes.len(), 4);
+        assert_eq!(modes[0].mode, "manager");
+        assert_eq!(modes[1].mode, "browser");
+        assert_eq!(modes[2].mode, "coder");
+        assert_eq!(modes[3].mode, "terminator");
+    }
+
+    #[test]
+    fn test_default_agent_modes_labels() {
+        let modes = crate::app::default_agent_modes();
+        assert_eq!(modes[0].label, "Mgr");
+        assert_eq!(modes[1].label, "Brow");
+        assert_eq!(modes[2].label, "Code");
+        assert_eq!(modes[3].label, "Term");
+    }
+
+    #[test]
+    fn test_default_agent_modes_runners() {
+        let modes = crate::app::default_agent_modes();
+        assert_eq!(modes[0].runner, "default");
+        assert_eq!(modes[1].runner, "browser");
+        assert_eq!(modes[2].runner, "coding");
+        assert_eq!(modes[3].runner, "orchestrator");
+    }
+
+    #[test]
+    fn test_cycle_agent_mode_cycles_through_all() {
+        let mut app = test_app();
+        assert_eq!(app.current_mode_index, 0);
+        assert_eq!(app.current_mode_label(), "Mgr");
+
+        app.cycle_agent_mode();
+        assert_eq!(app.current_mode_index, 1);
+        assert_eq!(app.current_mode_label(), "Brow");
+
+        app.cycle_agent_mode();
+        assert_eq!(app.current_mode_index, 2);
+        assert_eq!(app.current_mode_label(), "Code");
+
+        app.cycle_agent_mode();
+        assert_eq!(app.current_mode_index, 3);
+        assert_eq!(app.current_mode_label(), "Term");
+
+        app.cycle_agent_mode();
+        assert_eq!(app.current_mode_index, 0);
+        assert_eq!(app.current_mode_label(), "Mgr");
+    }
+
+    #[test]
+    fn test_sync_agent_mode_sets_correct_enum() {
+        let mut app = test_app();
+
+        app.current_mode_index = 0;
+        app.sync_agent_mode();
+        assert!(matches!(app.agent_mode, AgentMode::Manager));
+
+        app.current_mode_index = 1;
+        app.sync_agent_mode();
+        assert!(matches!(app.agent_mode, AgentMode::Browser));
+
+        app.current_mode_index = 2;
+        app.sync_agent_mode();
+        assert!(matches!(app.agent_mode, AgentMode::Coder));
+
+        app.current_mode_index = 3;
+        app.sync_agent_mode();
+        assert!(matches!(app.agent_mode, AgentMode::Terminator));
+    }
+
+    #[test]
+    fn test_set_agent_modes_preserves_current() {
+        let mut app = test_app();
+        app.current_mode_index = 2; // coder
+
+        let new_modes = vec![
+            crate::app::AgentModeEntry {
+                mode: "manager".into(),
+                label: "Mgr".into(),
+                runner: "default".into(),
+                description: "Manager".into(),
+                capabilities: vec![],
+            },
+            crate::app::AgentModeEntry {
+                mode: "coder".into(),
+                label: "Code".into(),
+                runner: "coding".into(),
+                description: "Coder".into(),
+                capabilities: vec![],
+            },
+            crate::app::AgentModeEntry {
+                mode: "frontend".into(),
+                label: "FE".into(),
+                runner: "coding".into(),
+                description: "Frontend".into(),
+                capabilities: vec!["fileops".into()],
+            },
+        ];
+        app.set_agent_modes(new_modes);
+
+        // "coder" was the current mode, should be preserved
+        assert_eq!(app.current_mode_index, 1);
+        assert_eq!(app.current_mode_label(), "Code");
+        assert!(matches!(app.agent_mode, AgentMode::Coder));
+    }
+
+    #[test]
+    fn test_set_agent_modes_empty_falls_back_to_defaults() {
+        let mut app = test_app();
+        app.current_mode_index = 2;
+        app.set_agent_modes(vec![]);
+        assert_eq!(app.agent_modes.len(), 4);
+    }
+
+    #[test]
+    fn test_set_agent_modes_unknown_mode_resets_to_zero() {
+        let mut app = test_app();
+        app.current_mode_index = 3; // terminator
+
+        let new_modes = vec![
+            crate::app::AgentModeEntry {
+                mode: "frontend".into(),
+                label: "FE".into(),
+                runner: "coding".into(),
+                description: "Frontend".into(),
+                capabilities: vec![],
+            },
+        ];
+        app.set_agent_modes(new_modes);
+
+        // "terminator" not found in new modes -> index 0
+        assert_eq!(app.current_mode_index, 0);
+        assert_eq!(app.current_mode_name(), "frontend");
+    }
+
+    #[test]
+    fn test_current_mode_name_default() {
+        let app = test_app();
+        assert_eq!(app.current_mode_name(), "manager");
     }
 }

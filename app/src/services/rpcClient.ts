@@ -14,29 +14,38 @@ class RPCClient {
     reject: (error: Error) => void;
   }>();
   private streamHandlers = new Map<string, StreamHandler>();
+  private onConnectionChange?: (connected: boolean) => void;
 
   constructor(url: string = 'ws://localhost:8765') {
     this.url = url;
   }
 
+  setOnConnectionChange(callback: (connected: boolean) => void): void {
+    this.onConnectionChange = callback;
+  }
+
   connect(): Promise<void> {
     return new Promise((resolve, reject) => {
       try {
+        console.log('[RPC] Attempting to connect to', this.url);
         this.ws = new WebSocket(this.url);
 
         this.ws.onopen = () => {
           console.log('[RPC] Connected to', this.url);
           this.reconnectAttempts = 0;
+          this.onConnectionChange?.(true);
           resolve();
         };
 
         this.ws.onclose = () => {
           console.log('[RPC] Connection closed');
+          this.onConnectionChange?.(false);
           this.handleReconnect();
         };
 
         this.ws.onerror = (error) => {
           console.error('[RPC] WebSocket error:', error);
+          this.onConnectionChange?.(false);
           reject(new Error('Failed to connect to RPC server'));
         };
 
@@ -44,6 +53,8 @@ class RPCClient {
           this.handleMessage(event.data);
         };
       } catch (error) {
+        console.error('[RPC] Connection error:', error);
+        this.onConnectionChange?.(false);
         reject(error);
       }
     });

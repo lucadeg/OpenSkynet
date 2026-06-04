@@ -9,9 +9,13 @@ import { SessionsPage } from '@/components/pages/SessionsPage';
 import { SkillsPage } from '@/components/pages/SkillsPage';
 import { LogsPage } from '@/components/pages/LogsPage';
 import { SettingsPage } from '@/components/pages/SettingsPage';
+import { useRPCConnection } from '@/hooks/useRPCConnection';
 
 function App() {
   const currentPage = useAppStore((state) => state.currentPage);
+
+  // Establish RPC connection on app load
+  useRPCConnection();
 
   useEffect(() => {
     console.log('[OpenSkynet] App initialized');
