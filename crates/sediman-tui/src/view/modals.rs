@@ -505,7 +505,7 @@ pub fn render_api_key_prompt(buf: &mut CellBuffer, area: Rect, app: &App) {
         buf.draw_str(inner_x + 2, y, placeholder, Style::new().fg(t.text_muted).bg(input_bg));
         buf.put_char(inner_x + 2, y, '\u{2588}', Style::new().fg(t.primary).bg(input_bg));
     } else {
-        let masked: String = "\u{2022}".repeat(app.api_key_input.len().min(30));
+        let masked: String = "\u{2022}".repeat(16);
         let display: String = masked.chars().take(frame.inner_w.saturating_sub(4)).collect();
         buf.draw_str(inner_x + 2, y, &display, Style::new().fg(t.text).bg(input_bg));
     }
@@ -751,7 +751,7 @@ pub fn render_soul_editor(buf: &mut CellBuffer, area: Rect, app: &App) {
         Style::new().fg(t.text_muted).bg(t.background));
 }
 
-pub fn render_skill_browser(buf: &mut CellBuffer, area: Rect, app: &mut App) {
+pub fn render_skill_browser(buf: &mut CellBuffer, area: Rect, app: &App) {
     let t = &app.theme;
     let query = app.skill_browser_filter.to_lowercase();
     let filtered: Vec<(usize, &sediman_tui_bridge::HubSkill)> = app
@@ -769,7 +769,6 @@ pub fn render_skill_browser(buf: &mut CellBuffer, area: Rect, app: &mut App) {
 
     let modal_w = (area.width * 85 / 100).max(60).min(area.width.saturating_sub(4));
     let max_items_on_screen = area.height.saturating_sub(8) as usize;
-    app.skill_browser_visible_rows = max_items_on_screen as u16;
     let max_visible = filtered.len().min(max_items_on_screen);
     let modal_h = (max_visible as u16 + 7).max(12).min(area.height.saturating_sub(2));
     let frame = ModalFrame::new(buf, area, app, modal_w, modal_h);

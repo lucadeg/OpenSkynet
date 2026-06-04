@@ -291,6 +291,10 @@ impl ApiClient {
         Ok(())
     }
 
+    pub async fn browser_configure(&self, headless: bool) -> BridgeResult<serde_json::Value> {
+        self.call("browser.configure", serde_json::json!({"headless": headless})).await
+    }
+
     pub async fn get_screenshot(&self) -> BridgeResult<Vec<u8>> {
         let resp: serde_json::Value = self
             .call("system.screenshot", serde_json::json!({}))

@@ -10,12 +10,16 @@ pub async fn handle_theme_picker(app: &mut App, key: crossterm::event::KeyEvent)
         KeyCode::Esc | KeyCode::Char('q') => {
             app.theme = app.theme_picker_saved_theme.clone();
             app.theme_name = app.theme_picker_saved_name.clone();
+            app.mark_dirty();
+            app.invalidate_markdown_cache();
             app.active_modal = None;
             true
         }
         KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             app.theme = app.theme_picker_saved_theme.clone();
             app.theme_name = app.theme_picker_saved_name.clone();
+            app.mark_dirty();
+            app.invalidate_markdown_cache();
             app.active_modal = None;
             true
         }
@@ -27,6 +31,8 @@ pub async fn handle_theme_picker(app: &mut App, key: crossterm::event::KeyEvent)
                 if let Some(theme) = sediman_tui_core::styling::load_theme(name) {
                     app.theme = theme;
                     app.theme_name = name.clone();
+                    app.mark_dirty();
+                    app.invalidate_markdown_cache();
                 }
             }
             true
@@ -39,6 +45,8 @@ pub async fn handle_theme_picker(app: &mut App, key: crossterm::event::KeyEvent)
                 if let Some(theme) = sediman_tui_core::styling::load_theme(name) {
                     app.theme = theme;
                     app.theme_name = name.clone();
+                    app.mark_dirty();
+                    app.invalidate_markdown_cache();
                 }
             }
             true

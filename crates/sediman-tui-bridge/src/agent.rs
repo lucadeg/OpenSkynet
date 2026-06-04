@@ -198,11 +198,15 @@ impl Drop for TaskStream {
 
 impl TaskStream {
     pub async fn submit(socket_path: &str, task: &str) -> BridgeResult<Self> {
+        Self::submit_with_method(socket_path, "agent.run", serde_json::json!({"task": task})).await
+    }
+
+    pub async fn submit_with_method(socket_path: &str, method: &str, params: serde_json::Value) -> BridgeResult<Self> {
         let request = serde_json::json!({
             "jsonrpc": "2.0",
             "id": 1,
-            "method": "agent.run",
-            "params": {"task": task},
+            "method": method,
+            "params": params,
         });
 
         let stream = UnixStream::connect(socket_path)

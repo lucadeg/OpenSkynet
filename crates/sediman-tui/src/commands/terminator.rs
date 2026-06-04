@@ -11,62 +11,129 @@ pub async fn handle_terminator(app: &mut App, args: &str) {
         return;
     }
 
+    app.show_banner = false;
     app.agent_running = true;
-    app.step_log.clear();
+    app.agent_start = std::time::Instant::now();
     app.spinner_text = "Terminator starting...".into();
-    app.streaming_text.clear();
-    app.streaming_phase.clear();
-    app.start_agent_message(task);
+    app.interrupt.clear();
+    app.task_count += 1;
 
-    app.append_step("◆ Terminator mode activated".into());
+    app.add_user_message(task.to_string(), app.task_count);
+    app.start_agent_message(task);
 
     let bridge_url = app.bridge_url().to_string();
     let task_owned = task.to_string();
-    let tx = app.event_tx.clone();
-    let _interrupt_flag = app.interrupt.flag().clone();
+    let tx = match app.event_tx.clone() {
+        Some(tx) => tx,
+        None => {
+            app.add_error_message("No event channel available.".into());
+            return;
+        }
+    };
+    let interrupt_flag = app.interrupt.flag().clone();
+    let start = std::time::Instant::now();
 
-    if let Some(ref tx) = tx {
-        let _ = tx.send(AppEvent::AgentStep("terminator".into(), "◆ Terminator mode activated".into()));
-    }
+    let _ = tx.send(AppEvent::AgentStep("terminator".into(), "◆ Terminator mode activated".into()));
 
     tokio::spawn(async move {
-        let client = sediman_tui_bridge::ApiClient::new(&bridge_url);
-        let start = std::time::Instant::now();
-        match client.run_terminator(&task_owned).await {
-            Ok(result) => {
-                let elapsed = start.elapsed().as_secs();
-                let success = result.success;
-                let result_text = if result.result.is_empty() {
-                    "Terminator completed.".into()
-                } else {
-                    result.result
-                };
-                if let Some(ref tx) = tx {
-                    for line in result_text.lines() {
-                        let _ = tx.send(AppEvent::AgentStep("terminator".into(), line.to_string()));
+        let result = run_terminator_stream(&bridge_url, &task_owned, &tx, &interrupt_flag).await;
+        let elapsed = start.elapsed().as_secs();
+
+        match result {
+            Ok(Some(agent_result)) => {
+                let _ = tx.send(AppEvent::AgentResult(
+                    agent_result.success,
+                    agent_result.result.clone(),
+                    elapsed,
+                    None,
+                    None,
+                ));
+                let icon = if agent_result.success { "✓" } else { "✗" };
+                let _ = tx.send(AppEvent::CommandOutput(format!(
+                    "{} Terminator finished ({})",
+                    icon,
+                    if elapsed >= 60 {
+                        format!("{}m {}s", elapsed / 60, elapsed % 60)
+                    } else {
+                        format!("{}s", elapsed)
                     }
-                    let _ = tx.send(AppEvent::AgentResult(success, result_text, elapsed));
-                    let _ = tx.send(AppEvent::AgentDone);
-                    let icon = if success { "✓" } else { "✗" };
-                    let _ = tx.send(AppEvent::CommandOutput(format!(
-                        "{} Terminator finished ({})",
-                        icon,
-                        if elapsed >= 60 {
-                            format!("{}m {}s", elapsed / 60, elapsed % 60)
-                        } else {
-                            format!("{}s", elapsed)
-                        }
-                    )));
-                }
+                )));
+            }
+            Ok(None) => {
+                let _ = tx.send(AppEvent::AgentError("No result received from Terminator.".into()));
             }
             Err(e) => {
-                if let Some(ref tx) = tx {
-                    let _ = tx.send(AppEvent::AgentError(format!("Terminator error: {}", e)));
-                    let _ = tx.send(AppEvent::AgentDone);
+                let _ = tx.send(AppEvent::AgentError(format!("Terminator error: {}", e)));
+            }
+        }
+        let _ = tx.send(AppEvent::AgentDone);
+    });
+}
+
+async fn run_terminator_stream(
+    bridge_url: &str,
+    task: &str,
+    tx: &tokio::sync::mpsc::UnboundedSender<AppEvent>,
+    interrupt_flag: &std::sync::Arc<std::sync::atomic::AtomicBool>,
+) -> Result<Option<sediman_tui_bridge::AgentResult>, Box<dyn std::error::Error + Send + Sync>> {
+    let params = serde_json::json!({"task": task});
+    let mut stream = sediman_tui_bridge::agent::TaskStream::submit_with_method(
+        bridge_url, "agent.terminator", params,
+    ).await?;
+
+    let mut final_result: Option<sediman_tui_bridge::AgentResult> = None;
+
+    loop {
+        if interrupt_flag.load(std::sync::atomic::Ordering::SeqCst) {
+            stream.cancel();
+            return Err("Interrupted by user".into());
+        }
+
+        tokio::select! {
+            msg = stream.rx.recv() => {
+                match msg {
+                    Some(ws_msg) => {
+                        match ws_msg.msg_type.as_str() {
+                            "streaming" => {
+                                if let Some(ref st) = ws_msg.streaming_token {
+                                    let _ = tx.send(AppEvent::StreamingToken(st.token.clone(), st.phase.clone()));
+                                }
+                            }
+                            "step" => {
+                                if let Some(ref event) = ws_msg.event {
+                                    let phase = event.phase.clone();
+                                    let action = event.action.clone();
+                                    let mut step_line = format!("{} {}", phase, action);
+                                    if let Some(ref detail) = event.detail {
+                                        step_line.push_str(&format!("\n  {}", detail));
+                                    }
+                                    let _ = tx.send(AppEvent::AgentStep(phase, step_line));
+                                }
+                            }
+                            "result" => {
+                                final_result = ws_msg.result;
+                                break;
+                            }
+                            "error" => {
+                                let err = ws_msg.error.unwrap_or("Unknown error".into());
+                                return Err(err.into());
+                            }
+                            _ => {}
+                        }
+                    }
+                    None => break,
+                }
+            }
+            _ = tokio::time::sleep(std::time::Duration::from_millis(100)) => {
+                if interrupt_flag.load(std::sync::atomic::Ordering::SeqCst) {
+                    stream.cancel();
+                    return Err("Interrupted by user".into());
                 }
             }
         }
-    });
+    }
+
+    Ok(final_result)
 }
 
 pub static CMD_TERMINATOR: Command = Command {

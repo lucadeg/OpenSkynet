@@ -5,6 +5,7 @@ use crossterm::event::{KeyCode, KeyModifiers};
 
 /// Handle Help modal key input.
 pub async fn handle_help_modal(app: &mut App, key: crossterm::event::KeyEvent) -> bool {
+    const MAX_HELP_SCROLL: u16 = 200;
     match key.code {
         KeyCode::Char('q') | KeyCode::Esc => {
             app.active_modal = None;
@@ -16,7 +17,7 @@ pub async fn handle_help_modal(app: &mut App, key: crossterm::event::KeyEvent) -
         }
         KeyCode::Down | KeyCode::Char('j') => {
             if let Some(AppModal::Help { scroll }) = &mut app.active_modal {
-                *scroll = scroll.saturating_add(1);
+                *scroll = (*scroll + 1).min(MAX_HELP_SCROLL);
             }
             true
         }
@@ -28,7 +29,7 @@ pub async fn handle_help_modal(app: &mut App, key: crossterm::event::KeyEvent) -
         }
         KeyCode::PageDown => {
             if let Some(AppModal::Help { scroll }) = &mut app.active_modal {
-                *scroll = scroll.saturating_add(10);
+                *scroll = (*scroll + 10).min(MAX_HELP_SCROLL);
             }
             true
         }

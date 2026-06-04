@@ -33,6 +33,7 @@ def _capture_exception(exc: Exception) -> None:
 from sediman.agent.loop import AgentLoop
 from sediman.agent.types import AgentResult, StepEvent
 from sediman.browser.session import BrowserSession
+from sediman.config import STEALTH_ENABLED, STEALTH_PROXY
 from sediman.config import MAX_TASK_LENGTH
 from sediman.llm.provider import create_provider, LLMProvider
 
@@ -153,7 +154,7 @@ async def handle_system_status(params: dict[str, Any], notify: NotifyFn | None =
     llm = _llm
     agent = _agent_loop
     return {
-        "browser_open": browser is not None and browser.is_running,
+        "browser_open": browser is not None and browser.is_started,
         "model": os.environ.get("SEDIMAN_MODEL") if not llm else getattr(llm, "model", None),
         "provider": _llm_config.get("provider", os.environ.get("SEDIMAN_PROVIDER", "openai")),
         "conversation_messages": len(getattr(agent, "_conversation", [])),
@@ -190,13 +191,14 @@ async def handle_system_doctor(params: dict[str, Any], notify: NotifyFn | None =
     for binary in ["google-chrome", "chromium", "python3"]:
         checks[binary] = shutil.which(binary) is not None
     checks["cloakbrowser"] = bool(os.environ.get("CLOAKBROWSER_BINARY"))
-    checks["browser_running"] = _browser is not None and getattr(_browser, "is_running", False)
+    checks["browser_running"] = _browser is not None and _browser.is_started
     checks["llm_configured"] = _llm is not None or bool(_llm_config)
     return {"checks": checks}
 
 
 async def handle_agent_run(params: dict[str, Any], notify: NotifyFn | None = None) -> dict[str, Any]:
     task = (params.get("task") or "").strip()
+    mode = (params.get("mode") or "manager").strip()
     if not task:
         raise ValueError("task is required")
     if len(task) > MAX_TASK_LENGTH:
@@ -235,7 +237,7 @@ async def handle_agent_run(params: dict[str, Any], notify: NotifyFn | None = Non
     start_time = time.monotonic()
 
     try:
-        result: AgentResult = await agent.run(task)
+        result: AgentResult = await agent.run(task, mode=mode)
     except AgentInterruptedError:
         return {
             "task": task,
@@ -270,6 +272,140 @@ async def handle_agent_run(params: dict[str, Any], notify: NotifyFn | None = Non
 async def handle_agent_cancel(params: dict[str, Any], notify: NotifyFn | None = None) -> dict[str, Any]:
     InterruptSignal.get().trigger("Cancelled by user via RPC")
     return {"cancelled": True}
+
+
+async def handle_agent_terminator(params: dict[str, Any], notify: NotifyFn | None = None) -> dict[str, Any]:
+    task = (params.get("task") or "").strip()
+    if not task:
+        raise ValueError("task is required")
+
+    agent = await _get_agent_loop()
+    llm = agent.llm
+
+    from sediman.agent.system.orchestrator import SystemOrchestrator
+    from sediman.agent.system.types import WorkflowConfig, WorkflowResult
+    from sediman.agent.subagents.factory import SubagentFactory
+    from sediman.agent.subagents.registry import SubagentRegistry
+    from sediman.agent.interrupt import AgentInterruptedError
+
+    step_counter = [0]
+
+    def terminator_step(phase: str, action: str, detail: str = "") -> None:
+        if notify:
+            step_counter[0] += 1
+            try:
+                notify("chat.progress", {
+                    "phase": phase,
+                    "action": action,
+                    "detail": detail,
+                    "step": step_counter[0],
+                })
+            except Exception:
+                logger.debug("terminator_step_notify_failed")
+
+    def terminator_streaming(token: str, phase: str = "responding") -> None:
+        if notify:
+            try:
+                notify("chat.streaming", {"token": token, "phase": phase})
+            except Exception:
+                logger.debug("terminator_streaming_notify_failed")
+
+    terminator_step("terminator", "decomposing task", task[:100])
+
+    decompose_prompt = (
+        f'Decompose this task into independent subtasks. '
+        f'Return a JSON array of objects with "title" and optional "depends_on" (array of 1-based indices).\n\n'
+        f'Task: {task}\n\n'
+        f'JSON array only, no explanation:'
+    )
+    try:
+        resp = await llm.chat(
+            messages=[
+                {"role": "system", "content": "You are a task decomposition specialist. Return ONLY a JSON array."},
+                {"role": "user", "content": decompose_prompt},
+            ],
+            tools=[],
+        )
+        import re
+        text = resp.text or "[]"
+        m = re.search(r"\[.*\]", text, re.DOTALL)
+        subtasks_raw = json.loads(m.group()) if m else [{"title": task}]
+    except Exception as e:
+        logger.warning("terminator_decompose_failed", error=str(e))
+        subtasks_raw = [{"title": task}]
+
+    terminator_step("terminator", "planning", f"{len(subtasks_raw)} subtasks identified")
+
+    config = WorkflowConfig()
+    registry = SubagentRegistry()
+    factory = SubagentFactory(
+        registry=registry,
+        llm_provider=llm,
+        on_step=lambda phase, action: terminator_step(phase, action),
+        on_streaming_text=terminator_streaming,
+    )
+    orchestrator = SystemOrchestrator(
+        llm_provider=llm,
+        manager=None,
+        factory=factory,
+        config=config,
+    )
+
+    InterruptSignal.get().clear()
+    start_time = time.monotonic()
+
+    try:
+        result: WorkflowResult = await orchestrator.run(task, subtasks_raw)
+    except AgentInterruptedError:
+        elapsed_secs = int(time.monotonic() - start_time)
+        return {
+            "task": task,
+            "result": "Terminator cancelled by user.",
+            "success": False,
+            "steps": [],
+            "elapsed_secs": elapsed_secs,
+        }
+    except Exception as e:
+        logger.error("terminator_run_error", error=str(e))
+        elapsed_secs = int(time.monotonic() - start_time)
+        return {
+            "task": task,
+            "result": f"Terminator failed: {e}",
+            "success": False,
+            "steps": [],
+            "elapsed_secs": elapsed_secs,
+        }
+
+    elapsed_secs = int(time.monotonic() - start_time)
+
+    terminator_step(
+        "terminator", "done",
+        f"resolved {len(result.resolved)}/{len(result.resolved) + len(result.failed)} issues",
+    )
+
+    steps = []
+    for issue in result.resolved:
+        steps.append({
+            "phase": "resolved",
+            "action": issue.title,
+            "detail": issue.result or "",
+        })
+    for issue in result.failed:
+        steps.append({
+            "phase": "failed",
+            "action": issue.title,
+            "detail": issue.diagnostic or issue.result or "",
+        })
+
+    return {
+        "task": task,
+        "result": result.summary,
+        "success": result.success,
+        "steps": steps,
+        "skill_created": None,
+        "actions_taken": result.actions_taken or [],
+        "elapsed_secs": elapsed_secs,
+    }
 
 
 async def handle_skills_run(params: dict[str, Any], notify: NotifyFn | None = None) -> dict[str, Any]:
@@ -1003,6 +1139,24 @@ async def handle_hub_publish(params: dict[str, Any], notify: NotifyFn | None = N
     return {"published": name, "message": str(result)}
 
 
+async def handle_browser_configure(params: dict[str, Any], notify: NotifyFn | None = None) -> dict[str, Any]:
+    global _browser
+    headless = params.get("headless", True)
+    if _browser is not None:
+        try:
+            await _browser.stop()
+        except Exception:
+            logger.debug("browser_stop_failed_during_reconfigure")
+        _browser = None
+    _browser = BrowserSession(
+        headless=headless,
+        stealth=STEALTH_ENABLED,
+        proxy=STEALTH_PROXY or None,
+    )
+    await _browser.start()
+    return {"configured": True, "headless": headless}
+
+
 # ── Dispatching ────────────────────────────────────────────────────
 
 NotifyFn = Callable[[str, dict[str, Any]], None]
@@ -1014,6 +1168,8 @@ HANDLERS: dict[str, Callable] = {
     "system.doctor": handle_system_doctor,
     "agent.run": handle_agent_run,
     "agent.cancel": handle_agent_cancel,
+    "agent.terminator": handle_agent_terminator,
+    "browser.configure": handle_browser_configure,
     "skills.run": handle_skills_run,
     "skills.list": handle_skills_list,
     "skills.get": handle_skills_get,
@@ -1172,7 +1328,7 @@ async def handle_connection(
             params = req.get("params", {})
             req_id = req.get("id")
 
-            if method == "agent.run":
+            if method in ("agent.run", "agent.terminator"):
                 cancel_task = asyncio.create_task(read_cancel())
                 try:
                     response = await dispatch_request(method, params, req_id, _sync_notify)

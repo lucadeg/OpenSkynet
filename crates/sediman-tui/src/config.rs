@@ -171,3 +171,11 @@ mod tests {
         assert!(path.to_str().unwrap().contains("tui.toml"));
     }
 }
+
+pub fn session_path() -> std::path::PathBuf {
+    TuiConfig::config_path()
+        .parent()
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+        .join("session.json")
+}

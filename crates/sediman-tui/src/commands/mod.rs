@@ -16,6 +16,7 @@ pub mod coder;
 pub mod search;
 pub mod checkpoint;
 pub mod update;
+pub mod terminator;
 
 use sediman_tui_core::command::CommandRegistry;
 
@@ -34,6 +35,7 @@ pub fn register_commands(registry: &mut CommandRegistry) {
     registry.register(&soul::CMD_SOUL);
     registry.register(&theming::CMD_THEMES);
     registry.register(&coder::CMD_CODER);
+    registry.register(&terminator::CMD_TERMINATOR);
     registry.register(&search::CMD_SEARCH);
     // Skills
     registry.register(&skills::CMD_SKILLS);
@@ -75,7 +77,7 @@ mod tests {
         let mut registry = CommandRegistry::new();
         register_commands(&mut registry);
         let all = registry.all();
-        assert_eq!(all.len(), 31);
+        assert_eq!(all.len(), 32);
     }
 
     #[test]

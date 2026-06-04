@@ -347,12 +347,13 @@ class AgentLoop:
         self._browser_agent_factory.set_memory_context(self._cached_memory_context)
         return self._browser_agent_factory.get_browser_agent(recording_name=recording_name, task=task)
 
-    async def run(self, task: str) -> AgentResult:
+    async def run(self, task: str, mode: str = "manager") -> AgentResult:
         session_id = str(uuid.uuid4())[:8]
         state = AgentState(task=task, max_iterations=self._max_iterations)
         self._budget = Budget()
         self._budget.start()
         self.llm.set_token_callback(self._budget.add_tokens)
+        self._streaming_handler.reset_think_parser()
         trace = self._trace_collector.start_trace("agent.run", task=task[:100])
         root_span = trace.spans[0] if trace.spans else None
 
@@ -360,11 +361,34 @@ class AgentLoop:
             await self._memory.initialize()
             self._memory_initialized = True
 
-        logger.info("agent_task_start", session_id=session_id, task=task)
+        logger.info("agent_task_start", session_id=session_id, task=task, mode=mode)
         self._audit.record("agent", "task_start", task[:100], session_id=session_id)
 
         if self._compressor.should_compress(self._conversation):
             self._conversation = await self._compressor.compress(self._conversation)
+
+        # ── Browser Mode: force browser-only execution ──────────
+        if mode == "browser":
+            plan = ManagerPlan(browser_task=task, strategy=Strategy.DIRECT)
+            state = self._build_plan_steps(state, plan)
+            state.phase = AgentPhase.EXECUTING
+            self._emit(state, "Browsing...", detail=task[:100])
+            step = state.current_step
+            if step:
+                exec_result = await self._get_direct_executor().execute(state, step)
+                step.result = exec_result.content
+                state.actions_taken.extend(exec_result.actions)
+            self._conversation.append({"role": "user", "content": task})
+            self._conversation.append({"role": "assistant", "content": exec_result.content if step else ""})
+            if len(self._conversation) > self.max_conversation:
+                self._conversation = self._conversation[-self.max_conversation:]
+            asyncio.create_task(self._get_post_task_handler().run_background(state, plan, task))
+            return AgentResult(
+                task=task,
+                result=exec_result.content if step else "",
+                strategy_used="browser",
+                actions_taken=state.actions_taken,
+            )
 
         # ── Turbo Path: zero-overhead for simple browser tasks ────
         if self.turbo_mode and self._turbo_handler.is_eligible(task, self._conversation):

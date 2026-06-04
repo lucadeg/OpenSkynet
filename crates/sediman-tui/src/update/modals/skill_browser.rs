@@ -1,5 +1,7 @@
 //! SkillBrowser modal key handling.
 
+const VISIBLE_ROWS: u16 = 15;
+
 use crate::app::App;
 use crossterm::event::{KeyCode, KeyModifiers};
 
@@ -44,7 +46,7 @@ pub async fn handle_skill_browser(app: &mut App, key: crossterm::event::KeyEvent
         KeyCode::Down | KeyCode::Char('j') | KeyCode::Tab => {
             if app.skill_browser_selected < filtered_count.saturating_sub(1) {
                 app.skill_browser_selected += 1;
-                let vr = app.skill_browser_visible_rows.saturating_sub(1);
+                let vr = VISIBLE_ROWS.saturating_sub(1);
                 let max_scroll = (app.skill_browser_selected as u16).saturating_sub(vr);
                 if app.skill_browser_scroll < max_scroll {
                     app.skill_browser_scroll = max_scroll;
@@ -64,7 +66,7 @@ pub async fn handle_skill_browser(app: &mut App, key: crossterm::event::KeyEvent
         KeyCode::PageDown => {
             let jump = 5.min(filtered_count.saturating_sub(1));
             app.skill_browser_selected = (app.skill_browser_selected + jump).min(filtered_count.saturating_sub(1));
-            let vr = app.skill_browser_visible_rows.saturating_sub(1);
+            let vr = VISIBLE_ROWS.saturating_sub(1);
             let max_scroll = (app.skill_browser_selected as u16).saturating_sub(vr);
             if app.skill_browser_scroll < max_scroll {
                 app.skill_browser_scroll = max_scroll;
@@ -187,7 +189,7 @@ async fn handle_skill_browser_filter_mode(app: &mut App, key: crossterm::event::
         KeyCode::Down => {
             if app.skill_browser_selected < filtered_count.saturating_sub(1) {
                 app.skill_browser_selected += 1;
-                let vr = app.skill_browser_visible_rows.saturating_sub(1);
+                let vr = VISIBLE_ROWS.saturating_sub(1);
                 let max_scroll = (app.skill_browser_selected as u16).saturating_sub(vr);
                 if app.skill_browser_scroll < max_scroll {
                     app.skill_browser_scroll = max_scroll;
@@ -205,9 +207,6 @@ async fn handle_skill_browser_filter_mode(app: &mut App, key: crossterm::event::
             true
         }
         KeyCode::Tab => {
-            app.skill_browser_filter.push('\t');
-            app.skill_browser_selected = 0;
-            app.skill_browser_scroll = 0;
             true
         }
         KeyCode::Char(c) => {
