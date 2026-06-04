@@ -1,3 +1,4 @@
+<img width="2816" height="1536" alt="Gemini_Generated_Image_g8qaaqg8qaaqg8qa" src="https://github.com/user-attachments/assets/d7cc4f18-85e9-43d3-ad9c-2ab2ffda9f43" />
 <div align="center">
 
 # OpenSkynet
@@ -31,6 +32,7 @@ terminator
 ```
 
 ### Agents
+<img width="2816" height="1536" alt="Gemini_Generated_Image_g8qaaqg8qaaqg8qa" src="https://github.com/user-attachments/assets/45cdaf57-c812-45a2-8f73-21674ed6a4ea" />
 
 Switch between agents with `Tab`.
 
