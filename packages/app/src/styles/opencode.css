@@ -1,0 +1,28 @@
+:root {
+  --oc-canvas: hsl(var(--background));
+  --oc-ink: hsl(var(--foreground));
+  --oc-border: hsl(var(--border));
+
+  --oc-gray-1: hsl(var(--background));
+  --oc-gray-2: hsl(var(--border));
+  --oc-gray-3: hsl(var(--muted));
+  --oc-gray-4: hsl(var(--muted-foreground));
+  --oc-gray-5: hsl(var(--foreground));
+
+  --oc-accent-blue: hsl(var(--info));
+  --oc-accent-green: hsl(var(--success));
+  --oc-accent-red: hsl(var(--error));
+
+  --oc-space-1: 4px;
+  --oc-space-2: 8px;
+  --oc-space-3: 12px;
+  --oc-space-4: 16px;
+  --oc-space-5: 20px;
+  --oc-space-6: 24px;
+  --oc-space-8: 32px;
+}
+
+.oc-mono { font-family: inherit; }
+.oc-no-decoration { text-decoration: none; color: inherit; }
+.oc-hairline { border: 1px solid hsl(var(--border)); }
+.oc-minimal { box-shadow: none; }
