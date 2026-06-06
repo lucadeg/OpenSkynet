@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { ElectronWebView } from '@/components/electron/ElectronWebView';
-import { X, Plus, Maximize2, Minimize2, RefreshCw, ExternalLink, Globe, XCircle, Upload, FileText } from 'lucide-react';
+import { X, Plus, Maximize2, Minimize2, RefreshCw, ExternalLink, Globe, XCircle, Upload, FileText, Square } from 'lucide-react';
 import { Button } from '@/components/shared/Button';
 import { useSandboxStore } from '@/stores/useSandboxStore';
 import { SkillRecordingControls } from '@/components/skills/SkillRecordingControls';
@@ -45,7 +45,6 @@ export function SandboxPanel() {
   const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [sandboxSessions, setSandboxSessions] = useState<SandboxSession[]>([]);
-  const [showSessionManager, setShowSessionManager] = useState(false);
   const apiBaseUrl = 'http://localhost:3001';
 
   const handleMouseDown = useCallback((e: React.MouseEvent) => {

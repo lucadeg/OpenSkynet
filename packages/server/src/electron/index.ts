@@ -1,55 +1,53 @@
 /**
  * Electron Server Module
  *
- * This module provides specialized agent functionality for the Electron app,
- * focusing on browser automation, document processing, and computer control.
+ * Browser-focused agent for Electron app, based on kimi-code architecture.
  *
- * Main exports:
- * - ElectronAgent: Specialized agent for browser/computer automation
- * - registerElectronTools: Tool registration for Electron agent
- * - createElectronAgent: Factory function to create a configured agent
+ * Key features:
+ * - Browser automation via Browser tool
+ * - Shell command integration
+ * - Tool-based execution system
+ * - Proper tool lifecycle management
+ *
+ * Architecture inspired by kimi-code:
+ * - BuiltinTool classes with resolveExecution
+ * - ToolResultBuilder for output formatting
+ * - ToolAccesses for resource tracking
+ * - Display metadata for UI
  */
 
 export { ElectronAgent } from "./agent/ElectronAgent";
-export type { ElectronAgentOpts, ElectronTaskCategory } from "./agent/ElectronAgent";
+export type { ElectronAgentOpts } from "./agent/ElectronAgent";
 
-export { registerElectronTools } from "./tools/electron-tools";
-export type { ElectronToolsOpts } from "./tools/electron-tools";
+export * from "./tools";
+export type { BuiltinTool, ToolExecution, ExecutableToolResult, ToolAccesses } from "./tooling/types";
 
 import { ElectronAgent } from "./agent/ElectronAgent";
 import { ToolBus } from "../agent/tools/bus";
-import { registerElectronTools } from "./tools/electron-tools";
 
 /**
- * Create a configured ElectronAgent with all tools registered
+ * Create a configured ElectronAgent with proper tool initialization
  */
 export interface CreateElectronAgentConfig {
   llmProvider: import("../llm/provider").LLMProvider;
   memory?: import("../memory/strategy").BaseMemoryStrategy;
   skillEngine?: import("../skills/engine").SkillEngine;
+  toolBus?: ToolBus;
+  workingDirectory?: string;
+  enableShellTools?: boolean;
   enableBrowserTools?: boolean;
-  enableDocumentTools?: boolean;
-  enableFileTools?: boolean;
   headless?: boolean;
 }
 
 export function createElectronAgent(config: CreateElectronAgentConfig): ElectronAgent {
-  // Create tool bus
-  const toolBus = new ToolBus();
-
-  // Register Electron-specific tools
-  registerElectronTools(toolBus, {
-    enableBrowserTools: config.enableBrowserTools,
-    enableDocumentTools: config.enableDocumentTools,
-    enableFileTools: config.enableFileTools,
-  });
-
-  // Create and return the agent
   return new ElectronAgent({
     llmProvider: config.llmProvider,
     memory: config.memory,
     skillEngine: config.skillEngine,
-    toolBus,
+    toolBus: config.toolBus,
+    workingDirectory: config.workingDirectory,
+    enableShellTools: config.enableShellTools ?? true,
+    enableBrowserTools: config.enableBrowserTools ?? true,
     headless: config.headless,
   });
 }

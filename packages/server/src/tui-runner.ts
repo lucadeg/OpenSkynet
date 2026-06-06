@@ -23,7 +23,7 @@ if (!existsSync(tuiBin)) {
 
 cleanup();
 
-const server = fork(resolve(process.cwd(), "packages/server/src/index.ts"), ["--mode", "rpc"], {
+const server = fork(resolve(process.cwd(), "packages/server/src/rpc-server.ts"), [], {
   env: { ...process.env, NODE_ENV: "production", SEDIMAN_RPC_SOCKET: SOCKET },
   stdio: ["ignore", "ignore", "ignore", "ipc"],
 });
@@ -31,10 +31,10 @@ const server = fork(resolve(process.cwd(), "packages/server/src/index.ts"), ["--
 function waitForSocket(retries: number, cb: () => void) {
   if (existsSync(SOCKET)) { cb(); return; }
   if (retries <= 0) { cb(); return; }
-  setTimeout(() => waitForSocket(retries - 1, cb), 200);
+  setTimeout(() => waitForSocket(retries - 1, cb), 50);
 }
 
-waitForSocket(25, () => {
+waitForSocket(50, () => {
   const tui = spawn(tuiBin, [
     "--socket", SOCKET,
     "--provider", process.env.SEDIMAN_PROVIDER ?? "openai",
