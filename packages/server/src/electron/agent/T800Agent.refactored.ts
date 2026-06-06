@@ -11,7 +11,7 @@
  */
 
 // Type imports
-import type { AgentResult, StepEvent } from '../../core/types';
+import type { AgentResult, StepEvent, LLMResponse, ToolCall } from '../../core/types';
 import type { LLMProvider } from '../../llm/provider';
 import type { BaseMemoryStrategy } from '../../memory/strategy';
 import type { SkillEngine } from '../../skills/engine';
@@ -124,11 +124,12 @@ export class T800Agent {
    * @returns Agent result with steps, actions taken, and outcome
    */
   async run(task: string): Promise<AgentResult> {
-    this.startTime = Date.now();
+    const startTime = Date.now();
     const steps: StepEvent[] = [];
     const actionsTaken: string[] = [];
     let finalResult = '';
     let success = false;
+    let iteration = 0;
     this.state.cancelled = false;
 
     try {
@@ -137,7 +138,6 @@ export class T800Agent {
       this.conversation.addUserMessage(task);
 
       let done = false;
-      let iteration = 0;
 
       while (!this.isExecutionComplete(done, iteration) && !this.state.cancelled) {
         iteration++;
@@ -283,7 +283,7 @@ export class T800Agent {
   /**
    * Execute LLM chat
    */
-  private async executeLLM(context: SystemPromptContext): Promise<LLMChatResponse> {
+  private async executeLLM(context: SystemPromptContext): Promise<LLMResponse> {
     const systemPrompt = buildSystemPrompt(context);
     const messages = this.conversation.getRecentMessages(DEFAULTS.CONVERSATION_WINDOW_SIZE);
     const tools = this.state.toolBus.getDefinitions();
@@ -295,7 +295,7 @@ export class T800Agent {
 
       logger.error({ err: errorMsg, iteration: context.iteration }, LOG_CONTEXTS.LLM_FAILED);
 
-      return { text: `${ERROR_MESSAGES.LLM_ERROR}: ${errorMsg}` };
+      return { text: `${ERROR_MESSAGES.LLM_ERROR}: ${errorMsg}`, tool_calls: [], done: true };
     }
   }
 
@@ -323,7 +323,7 @@ export class T800Agent {
       this.conversation.addToolResult(
         toolCall.id,
         toolCall.name,
-        result.success ? result.output : result.error ?? ERROR_MESSAGES.TOOL_ERROR
+        result.success ? (result.output ?? '') : (result.error ?? ERROR_MESSAGES.TOOL_ERROR)
       );
 
       actions.push(toolCall.name);

@@ -57,5 +57,5 @@ export {
 
 // Skills
 export { SkillAuditor } from "./skills/skill-auditor";
-export { SkillLearner } from "./skills/skill-learner";
-export { traceToSkill } from "./skills/trace-to-skill";
+export { SkillLearnerAgent as SkillLearner } from "./skills/skill-learner";
+export { TraceToSkill as traceToSkill } from "./skills/trace-to-skill";

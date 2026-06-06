@@ -13,7 +13,7 @@
 
 // Main agents
 export { T800Agent } from './T800Agent';
-export type { T800AgentOpts, AgentMessage } from './T800Agent';
+export type { T800AgentOpts } from './T800Agent';
 
 export { TerminatorAgent } from './TerminatorAgent';
 

@@ -69,7 +69,7 @@ export class T800Agent {
   private headless: boolean;
   private toolsInitialized = false;
   private cancelled = false;
-  private streamEmitter: StreamEmitter;
+  protected streamEmitter: StreamEmitter;
 
   constructor(opts: T800AgentOpts) {
     const config = getConfig();

@@ -3,7 +3,7 @@
  * Extracted from agent/loop.ts for better modularity
  */
 
-import type { Message } from "../../core/types";
+import type { Message } from "../core/types";
 import { ContextCompressor } from "../../agent/memory/compressor";
 
 export class CompressionHandler {

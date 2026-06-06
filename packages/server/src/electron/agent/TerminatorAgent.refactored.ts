@@ -98,13 +98,11 @@ export interface DecompositionConfig {
 export class TerminatorAgent extends T800Agent {
   private readonly maxParallelism: number;
   private readonly decompositionThreshold: number;
-  private streamEmitter: StreamEmitter;
 
   constructor(opts: TerminatorAgentOpts = {} as TerminatorAgentOpts) {
     super(opts);
-    this.maxParallelism = opts.maxParallelism ?? DEFAULTS.MAX_PARALLELISM;
-    this.decompositionThreshold = opts.decompositionThreshold ?? DEFAULTS.DECOMPOSITION_THRESHOLD;
-    this.streamEmitter = new StreamEmitter({ batchSize: 10, flushIntervalMs: 50 });
+    this.maxParallelism = opts.maxParallelism ?? TERMINATOR_DEFAULTS.MAX_PARALLELISM;
+    this.decompositionThreshold = opts.decompositionThreshold ?? TERMINATOR_DEFAULTS.DECOMPOSITION_THRESHOLD;
   }
 
   /**
@@ -171,7 +169,7 @@ export class TerminatorAgent extends T800Agent {
       detail: 'Decomposing task into subtasks',
     });
 
-    const subtasks = await this.decomposeTask(task);
+    const subtasks = await this.decomTask(task);
 
     this.streamEmitter.emitStepComplete('planning', 'decompose_complete', `Decomposed into ${subtasks.length} subtasks`, true);
 
@@ -474,7 +472,7 @@ Rules:
 /**
  * Default constants for TerminatorAgent
  */
-const DEFAULTS = {
+const TERMINATOR_DEFAULTS = {
   MAX_PARALLELISM: 3,
   DECOMPOSITION_THRESHOLD: 50, // words
 } as const;

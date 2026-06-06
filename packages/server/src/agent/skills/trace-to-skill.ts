@@ -1,4 +1,11 @@
-import type { RecordedFrame } from "./recording/models";
+interface RecordedFrame {
+  action?: {
+    timestamp: number;
+    type: string;
+    target?: string;
+    value?: string;
+  };
+}
 
 export class TraceToSkill {
   constructor(private llmProvider: any) {}

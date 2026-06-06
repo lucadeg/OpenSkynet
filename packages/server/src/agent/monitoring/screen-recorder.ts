@@ -1,4 +1,9 @@
-import type { RecordedFrame } from "./recording/models";
+interface RecordedFrame {
+  timestamp: number;
+  url: string;
+  title: string;
+  screenshot: string;
+}
 
 export class ScreenRecorder {
   private recording = false;
