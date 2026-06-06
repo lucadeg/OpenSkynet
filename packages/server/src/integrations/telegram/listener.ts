@@ -60,7 +60,7 @@ export class TelegramListener {
   private _setupMessageHandler(): void {
     if (!this.bot) return;
 
-    this.bot.on("message", (msg: TelegramBot.Message) => {
+    this.bot.on("message", (msg: any) => {
       if (!msg.text) return;
 
       const event: MessageEvent = {
@@ -73,7 +73,7 @@ export class TelegramListener {
         isCommand: msg.text?.startsWith("/") ?? false,
         timestamp: msg.date * 1000 + "",
         attachments: msg.photo
-          ? msg.photo.map((p) => ({
+          ? msg.photo.map((p: any) => ({
               url: `https://api.telegram.org/file/bot${this.token}/${p.file_id}`,
               name: "photo.jpg",
               type: "image/jpeg",
@@ -84,7 +84,7 @@ export class TelegramListener {
       this.onMessage?.(event);
     });
 
-    this.bot.on("callback_query", (query) => {
+    this.bot.on("callback_query", (query: any) => {
       const event: MessageEvent = {
         channelId: query.message.chat.id.toString(),
         channelName: query.message.chat.title ?? query.message.chat.type,
@@ -160,7 +160,7 @@ export class TelegramListener {
     };
   }
 
-  getBot(): TelegramBot | null {
+  getBot(): any | null {
     return this.bot;
   }
 }

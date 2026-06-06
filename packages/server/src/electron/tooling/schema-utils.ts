@@ -80,7 +80,7 @@ function convertZodToJsonSchema(schema: z.ZodType): Record<string, unknown> {
 /**
  * Type name handler map for faster lookups
  */
-const typeHandlers: ReadonlyMap<string, (def: any) => Record<string, unknown>> = new Map([
+const typeHandlers: ReadonlyMap<string, (def: any, zodType?: any) => Record<string, unknown>> = new Map([
   ['ZodString', (def) => {
     const schema: Record<string, unknown> = { type: 'string' };
     if (def.minLength !== undefined) schema.minLength = def.minLength;

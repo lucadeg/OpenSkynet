@@ -10,7 +10,7 @@ import type { BaseMemoryStrategy } from '../../../memory/strategy';
 import type { SkillEngine } from '../../../skills/engine';
 import type { SkillSearchEngine } from '../../../skills/search';
 import type { AgentLoop } from '../../../agent/loop';
-import type { ToolBus } from '../../../agent/tools/bus';
+import { ToolBus } from '../../../agent/tools/bus';
 import { getConfig } from '../../../core/config';
 
 /**

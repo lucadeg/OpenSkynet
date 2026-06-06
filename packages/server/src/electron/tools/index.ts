@@ -164,7 +164,7 @@ export function initializeT800Tools(
     const manager = getToolManager();
 
     if (enableBrowserTools) {
-      manager.registerTool('Browser', async () => new BrowserTool());
+      manager.registerImmediateTool('Browser', BrowserTool);
     }
     if (enableShellTools) {
       manager.registerTool('Shell', async () => new ShellTool(cwd));
@@ -218,7 +218,7 @@ export function initializeT800Tools(
 
   // Immediate loading (original behavior)
   if (enableBrowserTools) {
-    registerToolToToolBus(toolBus, new BrowserTool());
+    registerToolToToolBus(toolBus, BrowserTool);
   }
 
   if (enableShellTools) {

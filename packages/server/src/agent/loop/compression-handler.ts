@@ -29,7 +29,18 @@ export class CompressionHandler {
    * Compress conversation history
    */
   compress(conversation: Message[], maxTokens: number): Message[] {
-    return this.compressor.compress(conversation, maxTokens);
+    // ContextCompressor expects generic Message type, convert if needed
+    const genericMessages = conversation.map(m => ({
+      role: m.role as string,
+      content: m.content,
+    }));
+    const compressed = this.compressor.compress(genericMessages, maxTokens);
+    // Convert back to our Message type (timestamp may be lost in compression)
+    return compressed.map(m => ({
+      role: m.role as "user" | "assistant" | "system",
+      content: m.content,
+      timestamp: 'timestamp' in m ? (m.timestamp as number | undefined) : undefined,
+    }));
   }
 
   /**

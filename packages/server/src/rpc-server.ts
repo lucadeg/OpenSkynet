@@ -134,7 +134,7 @@ async function main() {
   const { SkillSearchEngine } = await import("./skills/search.js");
   const { CronManager } = await import("./scheduler/cron.js");
   const { Changelog } = await import("./memory/utils/changelog.js");
-  const { CheckpointManager } = await import("./agent/checkpoint.js");
+  const { CheckpointManager } = await import("./agent/memory/checkpoint.js");
   const { BrowserSession } = await import("./browser/session.js");
   const { BrowserController } = await import("./browser/controller.js");
   const { createProvider } = await import("./llm/provider.js");

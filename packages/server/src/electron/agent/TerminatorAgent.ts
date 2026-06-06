@@ -16,7 +16,7 @@ import type { SkillEngine } from '../../skills/engine';
 import type { SkillSearchEngine } from '../../skills/search';
 import { T800Agent, type T800AgentOpts } from './T800Agent';
 
-interface Subtask {
+export interface Subtask {
   id: string;
   description: string;
   status: 'pending' | 'in_progress' | 'completed' | 'failed';
@@ -25,7 +25,7 @@ interface Subtask {
   error?: string;
 }
 
-interface SubtaskResult {
+export interface SubtaskResult {
   subtask: Subtask;
   result: AgentResult;
 }

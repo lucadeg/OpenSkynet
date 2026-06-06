@@ -22,6 +22,8 @@ export interface SandboxSessionConfig {
   createdAt: number;
   lastUsedAt: number;
   status: 'starting' | 'running' | 'stopped' | 'error';
+  headless?: boolean;
+  proxy?: string;
   browserInstanceId?: string;
   metadata?: Record<string, unknown>;
 }

@@ -36,6 +36,11 @@ export interface ReadonlyActionContext {
 }
 
 /**
+ * Action context type alias for convenience
+ */
+export type ActionContext = ReadonlyActionContext;
+
+/**
  * Strategy interface for custom execution behaviors
  */
 export interface ExecutionStrategy {
@@ -195,7 +200,7 @@ export class ActionBasedTool<TInput = unknown> implements BuiltinTool<TInput> {
   /**
    * Resolve execution with strategy pattern and middleware support
    */
-  resolveExecution(input: TInput): ToolExecution {
+  async resolveExecution(input: TInput): Promise<ToolExecution> {
     // Lazy initialization check
     if (this.lazy && !this._initialized) {
       this._initialized = true;
@@ -215,7 +220,7 @@ export class ActionBasedTool<TInput = unknown> implements BuiltinTool<TInput> {
     if (!validationResult.success) {
       return {
         isError: true,
-        output: validationResult.error,
+        output: validationResult.error instanceof Error ? validationResult.error.message : (validationResult.error ?? 'Validation failed'),
       };
     }
 
@@ -226,18 +231,18 @@ export class ActionBasedTool<TInput = unknown> implements BuiltinTool<TInput> {
     if (!actionResult.success) {
       return {
         isError: true,
-        output: actionResult.error,
+        output: actionResult.error instanceof Error ? actionResult.error.message : (actionResult.error ?? 'Action not found'),
       };
     }
 
     const action = actionResult.value;
 
     // Execute middleware if present
-    const middlewareResult = this.executeMiddleware(action, data);
+    const middlewareResult = await this.executeMiddleware(action, data);
     if (!middlewareResult.success) {
       return {
         isError: true,
-        output: middlewareResult.error,
+        output: middlewareResult.error instanceof Error ? middlewareResult.error.message : (middlewareResult.error ?? 'Middleware execution failed'),
       };
     }
 
@@ -286,7 +291,7 @@ export class ActionBasedTool<TInput = unknown> implements BuiltinTool<TInput> {
     if (!parsed.success) {
       return {
         success: false,
-        error: `Validation error: ${parsed.error.message}`
+        error: new Error(`Validation error: ${parsed.error.message}`)
       };
     }
 
@@ -302,7 +307,7 @@ export class ActionBasedTool<TInput = unknown> implements BuiltinTool<TInput> {
     if (!action) {
       return {
         success: false,
-        error: `Unknown action: ${actionName}`
+        error: new Error(`Unknown action: ${actionName}`)
       };
     }
 
@@ -312,20 +317,20 @@ export class ActionBasedTool<TInput = unknown> implements BuiltinTool<TInput> {
   /**
    * Execute middleware chain
    */
-  private executeMiddleware<TInput>(action: ActionDef<TInput>, input: TInput): Result<TInput> {
+  private async executeMiddleware<TInput>(action: ActionDef<TInput>, input: TInput): Promise<Result<TInput>> {
     if (!action.middleware?.before) {
       return { success: true, value: input };
     }
 
     try {
-      const result = action.middleware.before!(input, this.createContext());
+      const result = await action.middleware.before!(input, this.createContext());
       return result.success
         ? result
-        : { success: false, error: String(result.error) };
+        : { success: false, error: result.error instanceof Error ? result.error : new Error(String(result.error)) };
     } catch (e) {
       return {
         success: false,
-        error: e instanceof Error ? e.message : String(e)
+        error: e instanceof Error ? e : new Error(String(e))
       };
     }
   }
