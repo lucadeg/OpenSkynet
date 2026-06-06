@@ -1,5 +1,5 @@
 import { render, useRenderer, useKeyboard, useTerminalDimensions, usePaste } from "@opentui/solid";
-import { RGBA, createCliRenderer, type CliRenderer, type TextareaRenderable, type ScrollBoxRenderable, type SelectRenderable, type InputRenderable } from "@opentui/core";
+import { RGBA, type CliRenderer, type TextareaRenderable, type ScrollBoxRenderable, type SelectRenderable, type InputRenderable } from "@opentui/core";
 import {
   App,
   type TUIDeps,
@@ -90,21 +90,23 @@ export async function startTUI(deps: TUIDeps): Promise<void> {
   app.themeName = config.theme || "opencode";
   app.load();
 
-  const renderer = await createCliRenderer({ exitOnCtrlC: false, targetFps: 30 });
+  let destroyed = false;
 
   try {
-    await render(() => <TUIApp app={app} deps={deps} />, renderer);
+    await render(
+      () => <TUIApp app={app} deps={deps} />,
+      {
+        exitOnCtrlC: false,
+        targetFps: 30,
+        onDestroy: () => { destroyed = true; },
+      },
+    );
   } catch (err) {
-    console.error("Render error:", err);
-    renderer.destroy();
-    return;
+    process.stderr.write("Render failed: " + (err instanceof Error ? err.stack : String(err)) + "\n");
   }
 
   await new Promise<void>((resolve) => {
-    const cleanup = () => { resolve(); };
-    process.on("SIGINT", cleanup);
-    process.on("SIGTERM", cleanup);
-    renderer.on("destroy" as any, cleanup);
+    const iv = setInterval(() => { if (destroyed) { clearInterval(iv); resolve(); } }, 200);
   });
 }
 
@@ -554,10 +556,10 @@ function TUIApp(props: { app: App; deps: TUIDeps }) {
       <TitleBar t={t} w={w} provider={provider} model={model} agentRunning={agentRunning} spinnerChar={spinnerChar} agentStartTime={agentStartTime} app={app} />
 
       <box flexGrow={1} minHeight={0} flexDirection="column">
-        <Show when={!showBanner() || messages().length > 0} fallback={<Banner t={t} app={app} />}>
+        <SafeShow when={!showBanner() || messages().length > 0} fallback={<Banner t={t} app={app} />}>
           <MessageList messages={messages} t={t} w={w} agentRunning={agentRunning} spinnerChar={spinnerChar} agentStartTime={agentStartTime} agentPhase={agentPhase} app={app}
             onRef={(ref) => { scrollRef = ref; }} />
-        </Show>
+        </SafeShow>
       </box>
 
       <box flexShrink={0} flexDirection="column" paddingLeft={2} paddingRight={2}>
@@ -571,28 +573,32 @@ function TUIApp(props: { app: App; deps: TUIDeps }) {
 
       <Footer t={t} w={w} />
 
-      <Show when={toastText() !== ""}>
-        <Toast text={toastText} t={t} />
-      </Show>
+      <box>
+        <SafeShow when={toastText() !== ""}>
+          <Toast text={toastText} t={t} />
+        </SafeShow>
+      </box>
 
-      <Show when={modalType() !== null}>
-        <Dialog
-          type={modalType()}
-          items={modalItems}
-          selectedIndex={modalSelectedIndex}
-          inputValue={modalInputValue}
-          infoTitle={modalInfoTitle}
-          infoLines={modalInfoLines}
-          t={t}
-          w={w}
-          app={app}
-          deps={deps}
-          onClose={closeModal}
-          onSelect={onModalSelect}
-          onInputValueChange={setModalInputValue}
-          onSelectedIndexChange={setModalSelectedIndex}
-        />
-      </Show>
+      <box>
+        <SafeShow when={modalType() !== null}>
+          <Dialog
+            type={modalType()}
+            items={modalItems}
+            selectedIndex={modalSelectedIndex}
+            inputValue={modalInputValue}
+            infoTitle={modalInfoTitle}
+            infoLines={modalInfoLines}
+            t={t}
+            w={w}
+            app={app}
+            deps={deps}
+            onClose={closeModal}
+            onSelect={onModalSelect}
+            onInputValueChange={setModalInputValue}
+            onSelectedIndexChange={setModalSelectedIndex}
+          />
+        </SafeShow>
+      </box>
     </box>
   );
 }
@@ -663,9 +669,9 @@ function MessageList(props: {
       <For each={props.messages()}>
         {(msg, i) => <MessageRow msg={msg} t={props.t} w={props.w} app={props.app} />}
       </For>
-      <Show when={props.agentRunning()}>
+      <SafeShow when={props.agentRunning()}>
         <AgentSpinner agentRunning={props.agentRunning} spinnerChar={props.spinnerChar} agentStartTime={props.agentStartTime} t={props.t} messages={props.messages} app={props.app} />
-      </Show>
+      </SafeShow>
     </scrollbox>
   );
 }
@@ -676,10 +682,11 @@ function MessageRow(props: { msg: ChatMessage; t: () => ThemeTokens; w: () => nu
   const maxW = () => props.w() - 4;
 
   return (
-    <Switch>
-      <Match when={msg.type === "user"}>
-        <text height={1} fg={rgba(t().secondary)}>{`❯ ${truncateStr(msg.text ?? "", maxW())}`}</text>
-      </Match>
+    <box flexDirection="column">
+      <Switch fallback={<text height={1} fg={rgba(t().textMuted)}>{" "}</text>}>
+        <Match when={msg.type === "user"}>
+          <text height={1} fg={rgba(t().secondary)}>{`❯ ${truncateStr(msg.text ?? "", maxW())}`}</text>
+        </Match>
       <Match when={msg.type === "system"}>
         <text height={1} fg={rgba(t().textMuted)}>{`  ${truncateStr(msg.text ?? "", maxW())}`}</text>
       </Match>
@@ -693,6 +700,7 @@ function MessageRow(props: { msg: ChatMessage; t: () => ThemeTokens; w: () => nu
         <AgentCompletedMessage msg={msg} t={t} w={props.w} app={props.app} />
       </Match>
     </Switch>
+    </box>
   );
 }
 
@@ -703,24 +711,24 @@ function AgentStreamingMessage(props: { msg: ChatMessage; t: () => ThemeTokens; 
 
   return (
     <box flexDirection="column">
-      <Show when={!!(msg.thinkingText && msg.thinkingText.length > 0)}>
+      <SafeShow when={!!(msg.thinkingText && msg.thinkingText.length > 0)}>
         <text height={1} fg={rgba(t().warning)}>◆ Thinking</text>
         <For each={msg.thinkingText!.split("\n").slice(-5).filter((l: string) => l.trim())}>
           {(line) => <text height={1} fg={rgba(t().textMuted)}>{`  ${truncateStr(line.trim(), maxW())}`}</text>}
         </For>
-      </Show>
-      <Show when={!!(msg.steps?.length)}>
+      </SafeShow>
+      <SafeShow when={!!(msg.steps?.length)}>
         <text height={1} fg={rgba(t().info)}>{`▸ ${msg.steps!.length} steps`}</text>
         <For each={msg.steps!.slice(-8)}>
           {(step) => <text height={1} fg={rgba(t().text)}>{`  ${truncateStr(step, maxW())}`}</text>}
         </For>
-      </Show>
-      <Show when={!!(msg.result && msg.result.length > 0)}>
+      </SafeShow>
+      <SafeShow when={!!(msg.result && msg.result.length > 0)}>
         <text height={1} fg={rgba(t().info)}>▶ Response</text>
         <For each={msg.result!.split("\n").slice(-15)}>
           {(line) => <text height={1} fg={rgba(t().text)}>{`  ${truncateStr(line, maxW())}`}</text>}
         </For>
-      </Show>
+      </SafeShow>
     </box>
   );
 }
@@ -737,27 +745,27 @@ function AgentCompletedMessage(props: { msg: ChatMessage; t: () => ThemeTokens; 
   return (
     <box flexDirection="column">
       <text height={1} fg={rgba(iconColor)}>{`${icon} Done · ${formatElapsed(elapsed)}`}</text>
-      <Show when={msg.tabExpanded && sel === "response" && msg.result}>
+      <SafeShow when={msg.tabExpanded && sel === "response" && msg.result}>
         <For each={msg.result!.split("\n").slice(0, 30)}>
           {(line) => <text height={1} fg={rgba(t().text)}>{`  ${truncateStr(line, maxW())}`}</text>}
         </For>
-      </Show>
-      <Show when={msg.tabExpanded && sel === "steps" && msg.steps}>
+      </SafeShow>
+      <SafeShow when={msg.tabExpanded && sel === "steps" && msg.steps}>
         <For each={msg.steps!.slice(-5)}>
           {(step) => <text height={1} fg={rgba(t().text)}>{`  ${truncateStr(step, maxW())}`}</text>}
         </For>
-      </Show>
-      <Show when={msg.tabExpanded && sel === "thinking" && msg.thinkingText}>
+      </SafeShow>
+      <SafeShow when={msg.tabExpanded && sel === "thinking" && msg.thinkingText}>
         <For each={msg.thinkingText!.split("\n").slice(0, 20).filter((l: string) => l.trim())}>
           {(line) => <text height={1} fg={rgba(t().textMuted)}>{`  ${truncateStr(line.trim(), maxW())}`}</text>}
         </For>
-      </Show>
-      <Show when={!!msg.skillCreated}>
+      </SafeShow>
+      <SafeShow when={!!msg.skillCreated}>
         <text height={1} fg={rgba(t().info)}>{`  ✦ Skill created: ${msg.skillCreated}`}</text>
-      </Show>
-      <Show when={!!msg.scheduledJob}>
+      </SafeShow>
+      <SafeShow when={!!msg.scheduledJob}>
         <text height={1} fg={rgba(t().secondary)}>{`  ⏰ Scheduled: ${msg.scheduledJob}`}</text>
-      </Show>
+      </SafeShow>
     </box>
   );
 }
@@ -773,11 +781,13 @@ function AgentSpinner(props: {
   const show = props.agentRunning() && lastMsg?.type === "agent" && lastMsg.state === "streaming";
 
   return (
-    <Show when={show}>
-      <text height={1} fg={rgba(props.t().primary)}>
-        {`${props.spinnerChar()} Working… ${formatElapsed(elapsed)} · ${stepCount} steps`}
-      </text>
-    </Show>
+    <box>
+      <SafeShow when={show}>
+        <text height={1} fg={rgba(props.t().primary)}>
+          {`${props.spinnerChar()} Working… ${formatElapsed(elapsed)} · ${stepCount} steps`}
+        </text>
+      </SafeShow>
+    </box>
   );
 }
 
@@ -813,6 +823,15 @@ function PromptInput(props: {
   );
 }
 
+function SafeShow<T>(props: { when: T | false | null | undefined; fallback?: JSX.Element; children: JSX.Element | ((item: T) => JSX.Element) }) {
+  const inner = (
+    <Show when={props.when} fallback={props.fallback ?? <box />}>
+      {props.children}
+    </Show>
+  );
+  return <box>{inner}</box>;
+}
+
 function PromptMeta(props: {
   t: () => ThemeTokens; agentMode: () => string; model: () => string;
   provider: () => string; agentRunning: () => boolean; spinnerChar: () => string;
@@ -840,9 +859,9 @@ function PromptMeta(props: {
       <text fg={rgba(t().textMuted)}>{`${props.model()} `}</text>
       <text fg={rgba(t().textMuted)}>{"· "}</text>
       <text fg={rgba(t().textMuted)}>{`${props.provider()} `}</text>
-      <Show when={hint()}>
+      <SafeShow when={hint()}>
         <text fg={rgba(t().primary)}>{`  ${hint()}`}</text>
-      </Show>
+      </SafeShow>
     </box>
   );
 }
@@ -941,29 +960,29 @@ function Dialog(props: {
         {titles[props.type ?? ""] ?? "Select"}
       </text>
 
-      <Show when={props.type === "help"}>
+      <SafeShow when={props.type === "help"}>
         <HelpContent t={props.t} w={modalW} />
-      </Show>
+      </SafeShow>
 
-      <Show when={props.type === "info" || props.type === "doctor"}>
+      <SafeShow when={props.type === "info" || props.type === "doctor"}>
         <InfoContent title={props.infoTitle} lines={props.infoLines} t={props.t} w={modalW} />
-      </Show>
+      </SafeShow>
 
-      <Show when={props.type === "apiKeyPrompt"}>
+      <SafeShow when={props.type === "apiKeyPrompt"}>
         <ApiKeyContent target={props.app.modal.pendingAction ?? ""} inputValue={props.inputValue} t={props.t} w={modalW} />
-      </Show>
+      </SafeShow>
 
-      <Show when={props.type === "soulEditor"}>
+      <SafeShow when={props.type === "soulEditor"}>
         <SoulContent inputValue={props.inputValue} t={props.t} w={modalW} />
-      </Show>
+      </SafeShow>
 
-      <Show when={props.type === "themePicker"}>
+      <SafeShow when={props.type === "themePicker"}>
         <ThemeContent selectedIndex={props.selectedIndex} themeName={() => props.app.themeName} t={props.t} w={modalW} />
-      </Show>
+      </SafeShow>
 
-      <Show when={props.type !== "help" && props.type !== "info" && props.type !== "doctor" && props.type !== "apiKeyPrompt" && props.type !== "soulEditor" && props.type !== "themePicker"}>
+      <SafeShow when={props.type !== "help" && props.type !== "info" && props.type !== "doctor" && props.type !== "apiKeyPrompt" && props.type !== "soulEditor" && props.type !== "themePicker"}>
         <PickerContent items={props.items} selectedIndex={props.selectedIndex} t={props.t} w={modalW} />
-      </Show>
+      </SafeShow>
     </box>
   );
 }
@@ -1028,13 +1047,13 @@ function ApiKeyContent(props: { target: string; inputValue: () => string; t: () 
 function SoulContent(props: { inputValue: () => string; t: () => ThemeTokens; w: () => number }) {
   return (
     <box flexDirection="column">
-      <Show when={props.inputValue()} fallback={
+      <SafeShow when={props.inputValue()} fallback={
         <text height={1} fg={rgba(props.t().textMuted)}>  Default personality active</text>
       }>
         <For each={props.inputValue().split("\n").slice(0, 5)}>
           {(line) => <text height={1} fg={rgba(props.t().text)}>{`  ${truncateStr(line, props.w() - 6)}`}</text>}
         </For>
-      </Show>
+      </SafeShow>
       <text height={1} fg={rgba(props.t().textMuted)}>Enter save · Esc cancel</text>
     </box>
   );
@@ -1080,9 +1099,9 @@ function PickerContent(props: { items: () => SelectItem[]; selectedIndex: () => 
           );
         }}
       </For>
-      <Show when={props.items().length > 0}>
+      <SafeShow when={props.items().length > 0}>
         <text height={1} fg={rgba(props.t().textMuted)}>↑↓ navigate · Enter select · Esc close</text>
-      </Show>
+      </SafeShow>
     </box>
   );
 }

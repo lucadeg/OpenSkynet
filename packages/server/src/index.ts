@@ -4,7 +4,7 @@ import { initSentry } from "./core/sentry";
 import { initDb, closeDb } from "./store/db";
 import { createRPCServer } from "./rpc";
 import { startApiServer } from "./api";
-import { startTUI } from "./tui/.build/index.js";
+import { startTUI } from "./tui/index.js";
 import { createProvider } from "./llm/provider";
 import { FileMemoryStrategy } from "./memory/strategies/file-memory";
 import { SkillEngine } from "./skills/engine";
