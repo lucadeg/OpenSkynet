@@ -6,6 +6,7 @@ import { Input } from '@/components/shared/Input';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/shared/Card';
 import { ScrollArea } from '@/components/shared/ScrollArea';
 import { Badge } from '@/components/shared/Badge';
+import { toast } from 'sonner';
 
 interface MemoryEntry {
   id: string;
@@ -73,16 +74,24 @@ export function MemoryPage() {
     }
   };
 
+  const [confirmClear, setConfirmClear] = useState(false);
+
   const handleClear = async () => {
-    if (confirm('Are you sure you want to clear all memories?')) {
-      try {
-        await fetch('http://localhost:3001/api/memory/clear', {
-          method: 'POST',
-        });
-        setMemories([]);
-      } catch {
-        console.error('Failed to clear memories');
-      }
+    if (!confirmClear) {
+      setConfirmClear(true);
+      setTimeout(() => setConfirmClear(false), 3000);
+      return;
+    }
+    setConfirmClear(false);
+    try {
+      await fetch('http://localhost:3001/api/memory/clear', {
+        method: 'POST',
+      });
+      setMemories([]);
+      toast.success('All memories cleared');
+    } catch {
+      console.error('Failed to clear memories');
+      toast.error('Failed to clear memories');
     }
   };
 
@@ -106,13 +115,12 @@ export function MemoryPage() {
         subtitle="Agent memory and context"
         actions={
           <Button
-            variant="outline"
+            variant={confirmClear ? 'destructive' : 'outline'}
             size="sm"
             onClick={handleClear}
-            className="text-destructive"
           >
             <Trash2 className="w-4 h-4 mr-2" />
-            Clear All
+            {confirmClear ? 'Confirm Clear All' : 'Clear All'}
           </Button>
         }
       />

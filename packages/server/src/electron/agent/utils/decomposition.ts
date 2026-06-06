@@ -5,8 +5,19 @@
  * into manageable subtasks.
  */
 
-import type { Subtask } from '../TerminatorAgent';
+// import type { Subtask } from '../TerminatorAgent'; // TerminatorAgent removed
 import type { LLMProvider } from '../../../llm/provider';
+
+/**
+ * Subtask interface (replacing TerminatorAgent.Subtask)
+ */
+export interface Subtask {
+  id: string;
+  description: string;
+  status: 'pending' | 'in_progress' | 'done' | 'failed';
+  result?: string;
+  dependencies?: string[];
+}
 
 /**
  * Result of a task decomposition
@@ -225,7 +236,7 @@ export function validateDependencies(subtasks: Subtask[]): boolean {
     const subtask = subtasks.find((s) => s.id === subtaskId);
     if (!subtask) return false;
 
-    for (const depId of subtask.dependencies) {
+    for (const depId of subtask.dependencies || []) {
       if (hasCycle(depId)) {
         return true;
       }
@@ -264,7 +275,7 @@ export function sortSubtasksByDependencies(subtasks: Subtask[]): Subtask[] {
     if (!subtask) return;
 
     // Visit dependencies first
-    for (const depId of subtask.dependencies) {
+    for (const depId of subtask.dependencies || []) {
       visit(depId);
     }
 

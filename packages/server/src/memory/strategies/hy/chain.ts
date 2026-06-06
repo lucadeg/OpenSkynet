@@ -1,11 +1,17 @@
 import { randomUUID } from "node:crypto";
-import { computeEmbedding } from "../../vector/embeddings";
+// import { computeEmbedding } from "../../vector/embeddings"; // Commented out - module removed
 import type { HyMemoryRecord } from "./models";
 import type { HyMemoryStore } from "./store";
 import type { MemoryExtractor } from "./extractor";
 import type { MemoryGate } from "./gate";
 import type { Retriever } from "./retriever";
 import { Schemer } from "./schemer";
+
+// Stub function for computeEmbedding until vector module is restored
+function computeEmbedding(_text: string): number[] {
+  // Return a dummy embedding vector of zeros
+  return new Array(1536).fill(0); // Standard OpenAI embedding size
+}
 
 export class Chain {
   private store: HyMemoryStore;

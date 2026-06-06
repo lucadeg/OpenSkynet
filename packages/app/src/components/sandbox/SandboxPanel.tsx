@@ -1,17 +1,8 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
-import { ElectronWebView } from '@/components/electron/ElectronWebView';
-import { X, Plus, Maximize2, Minimize2, RefreshCw, ExternalLink, Globe, XCircle, Upload, FileText, Square } from 'lucide-react';
+import { X, Maximize2, Minimize2, RefreshCw, ExternalLink, Globe, Upload, FileText, Square, Plus } from 'lucide-react';
 import { Button } from '@/components/shared/Button';
 import { useSandboxStore } from '@/stores/useSandboxStore';
-import { SkillRecordingControls } from '@/components/skills/SkillRecordingControls';
 import { cn } from '@/lib/utils';
-
-interface Tab {
-  id: string;
-  title: string;
-  url: string;
-  isActive: boolean;
-}
 
 interface UploadedFile {
   name: string;
@@ -30,22 +21,105 @@ interface SandboxSession {
   metadata?: Record<string, unknown>;
 }
 
+interface BrowserTab {
+  id: string;
+  url: string;
+  title: string;
+  loading: boolean;
+}
+
 export function SandboxPanel() {
   const isOpen = useSandboxStore(state => state.isOpen);
   const isActive = useSandboxStore(state => state.isActive);
   const togglePanel = useSandboxStore(state => state.togglePanel);
+  const setIsActive = useSandboxStore(state => state.setIsActive);
+  const setConnectionStatus = useSandboxStore(state => state.setConnectionStatus);
+
+  // Auto-activate browser when panel opens
+  useEffect(() => {
+    if (isOpen && !isActive) {
+      setIsActive(true);
+      setConnectionStatus('connected');
+    }
+  }, [isOpen, isActive, setIsActive, setConnectionStatus]);
 
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [panelWidth, setPanelWidth] = useState(600);
   const [isResizing, setIsResizing] = useState(false);
-  const [browserUrl] = useState('https://www.google.com');
-  const [tabs, setTabs] = useState<Tab[]>([
-    { id: '1', title: 'Browser', url: 'https://www.google.com', isActive: true }
+  const [browserTabs, setBrowserTabs] = useState<BrowserTab[]>([
+    { id: 'tab-1', url: 'https://www.wikipedia.org', title: 'Wikipedia', loading: false }
   ]);
+  const [activeTabId, setActiveTabId] = useState('tab-1');
   const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [sandboxSessions, setSandboxSessions] = useState<SandboxSession[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
   const apiBaseUrl = 'http://localhost:3001';
+  const webviewRef = useRef<any>(null);
+
+  const activeTab = browserTabs.find(tab => tab.id === activeTabId) || browserTabs[0];
+
+  useEffect(() => {
+    // Force webview to load URL when active tab changes
+    if (isActive && webviewRef.current && activeTab) {
+      webviewRef.current.src = activeTab.url;
+      setTimeout(() => {
+        if (webviewRef.current && webviewRef.current.loadURL) {
+          webviewRef.current.loadURL(activeTab.url);
+        }
+      }, 100);
+    }
+  }, [isActive, activeTab]);
+
+  const handleAddTab = () => {
+    const newTab: BrowserTab = {
+      id: `tab-${Date.now()}`,
+      url: 'https://www.wikipedia.org',
+      title: 'New Tab',
+      loading: false
+    };
+    setBrowserTabs([...browserTabs, newTab]);
+    setActiveTabId(newTab.id);
+  };
+
+  const handleCloseTab = (tabId: string) => {
+    if (browserTabs.length === 1) return; // Don't close the last tab
+    const newTabs = browserTabs.filter(tab => tab.id !== tabId);
+    setBrowserTabs(newTabs);
+    if (activeTabId === tabId) {
+      setActiveTabId(newTabs[0].id);
+    }
+  };
+
+  const handleTabChange = (tabId: string) => {
+    setActiveTabId(tabId);
+  };
+
+  const handleUrlSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const tab = browserTabs.find(t => t.id === activeTabId);
+    if (!tab) return;
+
+    let url = (e.target as any).elements.url.value.trim();
+    if (url && !url.startsWith('http://') && !url.startsWith('https://')) {
+      url = 'https://' + url;
+    }
+
+    // Update the active tab
+    setBrowserTabs(browserTabs.map(t =>
+      t.id === activeTabId ? { ...t, url, loading: true } : t
+    ));
+
+    if (url && window.electronAPI) {
+      window.electronAPI.browserNavigate(url);
+    }
+  };
+
+  const updateTabTitle = (tabId: string, title: string) => {
+    setBrowserTabs(browserTabs.map(tab =>
+      tab.id === tabId ? { ...tab, title, loading: false } : tab
+    ));
+  };
 
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
     if (isFullscreen) return;
@@ -80,31 +154,6 @@ export function SandboxPanel() {
     }
   }, [isResizing, handleMouseMove, handleMouseUp]);
 
-  const addTab = () => {
-    const newTab: Tab = {
-      id: Date.now().toString(),
-      title: 'New Tab',
-      url: 'https://www.google.com',
-      isActive: true
-    };
-    setTabs(prev => prev.map(t => ({ ...t, isActive: false })).concat(newTab));
-  };
-
-  const closeTab = (tabId: string) => {
-    if (tabs.length === 1) return;
-    setTabs(prev => {
-      const filtered = prev.filter(t => t.id !== tabId);
-      if (prev.find(t => t.id === tabId)?.isActive) {
-        filtered[filtered.length - 1].isActive = true;
-      }
-      return filtered;
-    });
-  };
-
-  const switchTab = (tabId: string) => {
-    setTabs(prev => prev.map(t => ({ ...t, isActive: t.id === tabId })));
-  };
-
   const handleFileSelect = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const files = event.target.files;
     if (!files || files.length === 0) return;
@@ -114,6 +163,7 @@ export function SandboxPanel() {
       formData.append('files', files[i]);
     }
 
+    setIsLoading(true);
     try {
       const response = await fetch(`${apiBaseUrl}/api/files/upload`, {
         method: 'POST',
@@ -128,6 +178,8 @@ export function SandboxPanel() {
       }
     } catch (error) {
       console.error('Failed to upload files:', error);
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -138,13 +190,6 @@ export function SandboxPanel() {
   const handleOpenFilePicker = () => {
     fileInputRef.current?.click();
   };
-
-  // Load sandbox sessions on mount
-  useEffect(() => {
-    loadSandboxSessions();
-    const interval = setInterval(loadSandboxSessions, 10000); // Refresh every 10s
-    return () => clearInterval(interval);
-  }, []);
 
   const loadSandboxSessions = async () => {
     try {
@@ -158,32 +203,11 @@ export function SandboxPanel() {
     }
   };
 
-  const handleCreateSandbox = async () => {
-    try {
-      const response = await fetch(`${apiBaseUrl}/api/sandbox/start`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: `Sandbox ${new Date().toLocaleTimeString()}`,
-          type: 'browser',
-        }),
-      });
-
-      if (response.ok) {
-        const result = await response.json();
-        if (result.success || result.session) {
-          await loadSandboxSessions();
-          // Activate the newly created sandbox
-          if (result.session) {
-            useSandboxStore.getState().setIsActive(true);
-            useSandboxStore.getState().setConnectionStatus('connected');
-          }
-        }
-      }
-    } catch (error) {
-      console.error('Failed to create sandbox:', error);
-    }
-  };
+  useEffect(() => {
+    loadSandboxSessions();
+    const interval = setInterval(loadSandboxSessions, 10000);
+    return () => clearInterval(interval);
+  }, []);
 
   const handleStopSandbox = async (sessionId: string) => {
     try {
@@ -201,17 +225,13 @@ export function SandboxPanel() {
     }
   };
 
-  const handleDeleteSandbox = async (sessionId: string) => {
-    try {
-      const response = await fetch(`${apiBaseUrl}/api/sandbox/${sessionId}`, {
-        method: 'DELETE',
-      });
-
-      if (response.ok) {
-        await loadSandboxSessions();
+  const handleRefresh = async () => {
+    if (window.electronAPI) {
+      await window.electronAPI.browserRefresh();
+      // Reload the active tab
+      if (activeTab && webviewRef.current) {
+        webviewRef.current.src = activeTab.url;
       }
-    } catch (error) {
-      console.error('Failed to delete sandbox:', error);
     }
   };
 
@@ -219,300 +239,141 @@ export function SandboxPanel() {
     return null;
   }
 
-  const activeTab = tabs.find(t => t.isActive);
-
-  const handleStart = async () => {
-    try {
-      useSandboxStore.getState().setIsActive(true);
-      useSandboxStore.getState().setConnectionStatus('connected');
-    } catch (error) {
-      console.error('[SandboxPanel] Failed to start browser:', error);
-    }
-  };
+  const hasActiveSessions = sandboxSessions.some(s => s.status === 'running');
 
   return (
     <>
       {!isFullscreen && (
         <div
           className={cn(
-            "fixed top-0 h-full z-[60] w-1.5 cursor-col-resize",
-            "hover:bg-primary/30 transition-colors",
-            isResizing && "bg-primary/50"
+            "fixed top-0 h-full z-[100] w-3 cursor-col-resize flex items-center justify-center",
+            "hover:bg-primary/20 transition-colors",
+            isResizing && "bg-primary/40"
           )}
-          style={{ right: panelWidth - 1 }}
+          style={{ left: `calc(100% - ${panelWidth}px - 1.5px)` }}
           onMouseDown={handleMouseDown}
           aria-hidden="true"
-        />
+        >
+          <div className="w-0.5 h-8 rounded-full bg-muted-foreground/30" />
+        </div>
       )}
       <div
         className={cn(
-          "flex flex-col bg-background shadow-lg transition-all duration-300 border-l border-border",
-          isFullscreen ? "fixed inset-0 z-50" : "fixed right-0 top-0 bottom-0 z-40"
+          "flex flex-col shadow-lg transition-all duration-300 border-l border-border pointer-events-auto",
+          isFullscreen ? "fixed inset-0 z-50" : "fixed right-0 top-0 bottom-0 z-50"
         )}
-        style={{ width: isFullscreen ? '100%' : panelWidth }}
+        style={{
+          width: isFullscreen ? '100%' : panelWidth,
+          backgroundColor: 'transparent',
+          background: 'transparent'
+        }}
         role="complementary"
         aria-label="Browser panel"
       >
-        <div className="bg-muted/30 border-b border-border">
-          <div className="flex items-center bg-muted/50">
-            {tabs.map(tab => (
-              <div
-                key={tab.id}
-                className={cn(
-                  "flex items-center gap-2 px-3 py-2 border-r border-border cursor-pointer group relative transition-all duration-200",
-                  tab.isActive ? 'bg-background shadow-sm' : 'bg-muted/30 hover:bg-muted/50'
-                )}
-                onClick={() => switchTab(tab.id)}
+        {/* Header */}
+        <div className="bg-muted/30 border-b border-border backdrop-blur-sm" style={{ backgroundColor: 'rgba(var(--muted-rgb), 0.3)' }}>
+          <div className="flex items-center justify-between px-3 py-2">
+            <div className="flex items-center gap-2">
+              <Globe className="w-4 h-4 text-muted-foreground" />
+              <span className="text-sm font-medium">Browser</span>
+            </div>
+            <div className="flex items-center gap-1">
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={handleRefresh}
+                className="h-7 w-7 p-0"
+                title="Refresh"
               >
-                <span className="text-sm max-w-[150px] truncate font-medium">{tab.title}</span>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    closeTab(tab.id);
-                  }}
-                  className="opacity-0 group-hover:opacity-100 hover:bg-destructive/20 hover:text-destructive rounded p-1 transition-all duration-200 flex-shrink-0"
-                  aria-label={`Close tab ${tab.title}`}
-                >
-                  <X className="w-3.5 h-3.5" />
-                </button>
-              </div>
+                <RefreshCw className="w-3 h-3" />
+              </Button>
+              <button
+                onClick={() => setIsFullscreen(!isFullscreen)}
+                className="p-1.5 hover:bg-muted-foreground/20 rounded transition-all duration-200"
+                title={isFullscreen ? 'Exit fullscreen' : 'Fullscreen'}
+              >
+                {isFullscreen ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
+              </button>
+              <button
+                onClick={async () => {
+                  if (window.electronAPI) {
+                    await window.electronAPI.browserHide();
+                  }
+                  togglePanel();
+                }}
+                className="p-1.5 hover:bg-destructive/20 hover:text-destructive rounded transition-all duration-200"
+                title="Close browser"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+
+          {/* Tabs */}
+          <div className="flex items-center gap-1 px-2 pt-2 border-b border-border/50">
+            {browserTabs.map((tab) => (
+              <button
+                key={tab.id}
+                onClick={() => handleTabChange(tab.id)}
+                className={cn(
+                  "flex items-center gap-2 px-3 py-1.5 rounded-t-md text-xs transition-all",
+                  "hover:bg-muted-foreground/10",
+                  activeTabId === tab.id
+                    ? "bg-background border border-b-0 border-border"
+                    : "text-muted-foreground"
+                )}
+              >
+                <Globe className="w-3 h-3" />
+                <span className="max-w-[120px] truncate">{tab.title}</span>
+                {browserTabs.length > 1 && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleCloseTab(tab.id);
+                    }}
+                    className="ml-1 p-0.5 hover:bg-destructive/20 rounded"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                )}
+              </button>
             ))}
             <button
-              onClick={addTab}
-              className="p-2 hover:bg-muted-foreground/20 rounded transition-all duration-200"
-              title="New tab"
-              aria-label="Open new tab"
+              onClick={handleAddTab}
+              className="p-1.5 hover:bg-muted-foreground/10 rounded transition-all"
+              title="Add new tab"
             >
-              <Plus className="w-4 h-4" />
-            </button>
-            <div className="flex-1" />
-            <button
-              onClick={() => setIsFullscreen(!isFullscreen)}
-              className="p-2 hover:bg-muted-foreground/20 rounded transition-all duration-200"
-              title={isFullscreen ? 'Exit fullscreen' : 'Fullscreen'}
-              aria-label={isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
-            >
-              {isFullscreen ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
-            </button>
-            <button
-              onClick={togglePanel}
-              className="p-2 hover:bg-destructive/20 hover:text-destructive rounded transition-all duration-200 ml-1"
-              title="Close browser"
-              aria-label="Close browser panel"
-            >
-              <XCircle className="w-4 h-4" />
+              <Plus className="w-3 h-3" />
             </button>
           </div>
 
-          <div className="flex items-center gap-2 px-3 py-2">
-            <div className="flex items-center gap-1">
-              <Button size="sm" variant="ghost" className="h-7 w-7 p-0" title="Back" aria-label="Go back">
-                <span className="text-xs">{'\u25C0'}</span>
-              </Button>
-              <Button size="sm" variant="ghost" className="h-7 w-7 p-0" title="Forward" aria-label="Go forward">
-                <span className="text-xs">{'\u25B6'}</span>
-              </Button>
-              <Button size="sm" variant="ghost" className="h-7 w-7 p-0" title="Refresh" aria-label="Refresh page">
-                <RefreshCw className="w-3 h-3" />
-              </Button>
-            </div>
-
-            {isActive && (
-              <div className="flex items-center">
-                <SkillRecordingControls position="header" />
-              </div>
-            )}
-            <div className="flex-1 flex items-center bg-background border border-input rounded-md px-3 py-1.5 shadow-sm focus-within:ring-2 focus-within:ring-ring focus-within:border-ring transition-all duration-200">
+          {/* URL Bar */}
+          <form onSubmit={handleUrlSubmit} className="flex items-center gap-2 px-3 pb-2">
+            <div className="flex-1 flex items-center bg-background border border-input rounded-md px-3 py-1.5 shadow-sm">
               <ExternalLink className="w-3 h-3 text-muted-foreground mr-2" />
               <input
                 type="text"
-                value={activeTab?.url || ''}
-                readOnly
+                name="url"
+                defaultValue={activeTab?.url}
                 className="flex-1 bg-transparent text-sm outline-none text-foreground"
-                aria-label="Current URL"
+                placeholder="Enter URL..."
+                aria-label="Browser URL"
               />
             </div>
-          </div>
+          </form>
+        </div>
 
-          {/* Sandbox Sessions Section */}
-          {sandboxSessions.length > 0 && (
-            <div className="border-b border-border bg-muted/30 px-3 py-2">
-              <div className="flex items-center justify-between mb-2">
-                <div className="flex items-center gap-2 text-sm">
-                  <Globe className="w-4 h-4 text-muted-foreground" />
-                  <span className="font-medium">Active Sandboxes</span>
-                  <span className="text-xs text-muted-foreground">({sandboxSessions.filter(s => s.status === 'running').length})</span>
-                </div>
-                <Button
-                  size="sm"
-                  variant="default"
-                  onClick={handleCreateSandbox}
-                  className="h-7 px-2 text-xs"
-                >
-                  <Plus className="w-3 h-3 mr-1" />
-                  New Sandbox
-                </Button>
-              </div>
-              <div className="flex flex-wrap gap-2">
-                {sandboxSessions.map((session) => (
-                  <div
-                    key={session.id}
-                    className="flex items-center gap-2 bg-background border border-input rounded-md px-2 py-1 text-sm"
-                  >
-                    <div className="flex items-center gap-1.5">
-                      <div
-                        className={cn(
-                          "w-2 h-2 rounded-full",
-                          session.status === 'running' ? 'bg-green-500' : 'bg-yellow-500',
-                          session.status === 'error' && 'bg-red-500'
-                        )}
-                      />
-                      <span className="font-medium text-xs">{session.name}</span>
-                    </div>
-                    <div className="flex items-center gap-1">
-                      <span className="text-xs text-muted-foreground">
-                        {session.type === 'browser' ? 'Browser' : 'Computer'}
-                      </span>
-                      <span className="text-xs text-muted-foreground">
-                        ({session.status})
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-1 ml-2">
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={() => handleStopSandbox(session.id)}
-                        disabled={session.status !== 'running'}
-                        className="h-6 px-1.5 text-xs"
-                        title="Stop"
-                      >
-                        <Square className="w-2.5 h-2.5" />
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={() => handleDeleteSandbox(session.id)}
-                        className="h-6 px-1.5 text-xs text-muted-foreground hover:text-destructive"
-                        title="Delete"
-                      >
-                        <X className="w-2.5 h-2.5" />
-                      </Button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {sandboxSessions.length === 0 && (
-            <div className="border-b border-border px-3 py-2">
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={handleCreateSandbox}
-                className="w-full text-xs"
-              >
-                <Globe className="w-3 h-3 mr-2" />
-                Create Browser Sandbox
-              </Button>
-            </div>
-          )}
-
-          {/* File Workspace Section */}
-          {uploadedFiles.length > 0 && (
-            <div className="border-b border-border bg-muted/30 px-3 py-2">
-              <div className="flex items-center justify-between mb-2">
-                <div className="flex items-center gap-2 text-sm">
-                  <FileText className="w-4 h-4 text-muted-foreground" />
-                  <span className="font-medium">Workspace Files</span>
-                  <span className="text-xs text-muted-foreground">({uploadedFiles.length})</span>
-                </div>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  onClick={handleOpenFilePicker}
-                  className="h-7 px-2 text-xs"
-                >
-                  <Upload className="w-3 h-3 mr-1" />
-                  Add Files
-                </Button>
-              </div>
-              <div className="flex flex-wrap gap-2">
-                {uploadedFiles.map((file) => (
-                  <div
-                    key={file.name}
-                    className="flex items-center gap-2 bg-background border border-input rounded-md px-2 py-1 text-sm"
-                  >
-                    <FileText className="w-3 h-3 text-muted-foreground" />
-                    <span className="max-w-[150px] truncate">{file.name}</span>
-                    <span className="text-xs text-muted-foreground">
-                      ({(file.size / 1024).toFixed(1)} KB)
-                    </span>
-                    <button
-                      onClick={() => handleRemoveFile(file.name)}
-                      className="text-muted-foreground hover:text-destructive transition-colors"
-                    >
-                      <X className="w-3 h-3" />
-                    </button>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {uploadedFiles.length === 0 && sandboxSessions.length === 0 && (
-            <div className="border-b border-border px-3 py-2">
-              <div className="grid grid-cols-2 gap-2">
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={handleCreateSandbox}
-                  className="text-xs"
-                >
-                  <Globe className="w-3 h-3 mr-2" />
-                  Create Sandbox
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={handleOpenFilePicker}
-                  className="text-xs"
-                >
-                  <Upload className="w-3 h-3 mr-2" />
-                  Upload Files
-                </Button>
-              </div>
-              <input
-                ref={fileInputRef}
-                type="file"
-                multiple
-                onChange={handleFileSelect}
-                className="hidden"
-              />
-            </div>
-          )}
-
-          {uploadedFiles.length === 0 && sandboxSessions.length > 0 && (
-            <div className="border-b border-border px-3 py-2">
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={handleOpenFilePicker}
-                className="w-full text-xs"
-              >
-                <Upload className="w-3 h-3 mr-2" />
-                Upload Files to Workspace
-              </Button>
-              <input
-                ref={fileInputRef}
-                type="file"
-                multiple
-                onChange={handleFileSelect}
-                className="hidden"
-              />
-            </div>
-          )}
-
+        {/* Action Buttons */}
+        <div className="border-b border-border bg-muted/20 px-3 py-3 space-y-2 relative z-10 backdrop-blur-sm" style={{ backgroundColor: 'rgba(var(--muted-rgb), 0.2)' }}>
+          <Button
+            variant="outline"
+            onClick={handleOpenFilePicker}
+            disabled={isLoading}
+            className="w-full"
+          >
+            <Upload className="w-4 h-4 mr-2" />
+            Upload Files
+          </Button>
           <input
             ref={fileInputRef}
             type="file"
@@ -522,31 +383,133 @@ export function SandboxPanel() {
           />
         </div>
 
-        <div className="flex-1 relative bg-background">
-          {!isActive ? (
-            <div className="flex items-center justify-center h-full">
-              <div className="text-center p-8">
-                <Globe className="w-16 h-16 text-muted-foreground mx-auto mb-4" />
-                <p className="text-muted-foreground mb-2">Browser ready to start</p>
-                <Button onClick={handleStart} size="lg">
-                  Start Browser
-                </Button>
-              </div>
+        {/* Uploaded Files */}
+        {uploadedFiles.length > 0 && (
+          <div className="border-b border-border px-3 py-2 max-h-32 overflow-y-auto relative z-10 backdrop-blur-sm" style={{ backgroundColor: 'rgba(var(--background-rgb), 0.8)' }}>
+            <div className="text-xs font-medium text-muted-foreground mb-2">Uploaded Files</div>
+            <div className="space-y-1">
+              {uploadedFiles.map((file) => (
+                <div
+                  key={file.name}
+                  className="flex items-center gap-2 text-xs bg-muted/50 rounded px-2 py-1"
+                >
+                  <FileText className="w-3 h-3 text-muted-foreground" />
+                  <span className="flex-1 truncate">{file.name}</span>
+                  <span className="text-muted-foreground">({(file.size / 1024).toFixed(1)} KB)</span>
+                  <button
+                    onClick={() => handleRemoveFile(file.name)}
+                    className="text-muted-foreground hover:text-destructive"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                </div>
+              ))}
             </div>
-          ) : (
-            <ElectronWebView
-              url={activeTab?.url || browserUrl}
-              style={{ width: '100%', height: '100%' }}
-            />
-          )}
-        </div>
-
-        {isActive && (
-          <div className="flex items-center justify-between px-3 py-1 bg-muted/30 border-t border-border text-xs text-muted-foreground">
-            <span>Connected</span>
-            <span>Electron Runtime</span>
           </div>
         )}
+
+        {/* Active Sessions */}
+        {hasActiveSessions && (
+          <div className="border-b border-border px-3 py-2 max-h-32 overflow-y-auto relative z-10 backdrop-blur-sm" style={{ backgroundColor: 'rgba(var(--background-rgb), 0.8)' }}>
+            <div className="text-xs font-medium text-muted-foreground mb-2">Active Sessions</div>
+            <div className="space-y-1">
+              {sandboxSessions
+                .filter(s => s.status === 'running')
+                .map((session) => (
+                  <div
+                    key={session.id}
+                    className="flex items-center gap-2 text-xs bg-muted/50 rounded px-2 py-1"
+                  >
+                    <div className="w-2 h-2 rounded-full bg-green-500" />
+                    <span className="flex-1">{session.name}</span>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => handleStopSandbox(session.id)}
+                      className="h-5 px-1"
+                    >
+                      <Square className="w-3 h-3" />
+                    </Button>
+                  </div>
+                ))}
+            </div>
+          </div>
+        )}
+
+        {/* Browser View */}
+        <div className="flex-1 relative overflow-hidden" style={{ height: '100%', minHeight: 0 }}>
+          {!isActive && (
+            <div className="flex items-center justify-center h-full bg-background">
+              <div className="text-center p-8">
+                <Globe className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
+                <p className="text-muted-foreground text-sm">Click "Start Browser" to begin</p>
+              </div>
+            </div>
+          )}
+          <div className="absolute inset-0 w-full h-full">
+            <style>{`
+              #browser-webview {
+                width: 100% !important;
+                height: 100% !important;
+              }
+              #browser-webview iframe {
+                height: 100% !important;
+                flex: none !important;
+              }
+            `}</style>
+            <webview
+              id="browser-webview"
+              key={activeTabId}
+              ref={(el) => {
+                webviewRef.current = el;
+                if (el) {
+                  el.addEventListener('dom-ready', () => {
+                    // Update tab title when page loads
+                    const title = el.getTitle();
+                    if (title) {
+                      updateTabTitle(activeTabId, title);
+                    }
+                    // Fix iframe height manually
+                    setTimeout(() => {
+                      const iframe = el.shadowRoot?.querySelector('iframe');
+                      if (iframe) {
+                        iframe.style.height = '100%';
+                        iframe.style.flex = 'none';
+                        iframe.style.position = 'absolute';
+                        iframe.style.top = '0';
+                        iframe.style.left = '0';
+                      }
+                    }, 100);
+                  });
+                  el.addEventListener('page-title-updated', (e: any) => {
+                    if (e.title) {
+                      updateTabTitle(activeTabId, e.title);
+                    }
+                  });
+                }
+              }}
+              src={activeTab?.url || 'https://www.wikipedia.org'}
+              style={{
+                width: '100%',
+                height: '100%',
+                border: 'none',
+                backgroundColor: 'white',
+                display: 'block'
+              }}
+              className="w-full h-full"
+              useragent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0"
+              partition="persist:browser-panel"
+              // @ts-ignore - webview attributes
+              allowpopups={true}
+            />
+          </div>
+        </div>
+
+        {/* Status Bar */}
+        <div className="flex items-center justify-between px-3 py-1 border-t border-border text-xs text-muted-foreground relative z-10 backdrop-blur-sm" style={{ backgroundColor: 'rgba(var(--muted-rgb), 0.3)' }}>
+          <span>{isActive ? 'Connected' : 'Disconnected'}</span>
+          <span>{isActive ? activeTab?.url : 'Electron Browser'}</span>
+        </div>
       </div>
     </>
   );

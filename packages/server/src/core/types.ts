@@ -136,6 +136,32 @@ export interface SessionInfo {
   result?: string;
 }
 
+export interface Project {
+  id: string;
+  name: string;
+  description: string;
+  userDataDir: string;
+  headless: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ProjectConversation {
+  id: string;
+  projectId: string;
+  task: string;
+  stepsJson: string;
+  result?: string;
+  agentMode: string;
+  createdAt: string;
+}
+
+export interface ProjectConfig {
+  name: string;
+  description?: string;
+  headless?: boolean;
+}
+
 export interface ServerStatus {
   running: boolean;
   uptime_secs: number;

@@ -1,7 +1,7 @@
 import type { RPCServer, NotifyFn } from "../server.js";
 import type { RPCHandlerDeps } from "../deps.js";
 import type { StepEvent } from "../../core/types.js";
-import { T800Agent, TerminatorAgent } from "../../electron/index.js";
+import { BrowserAgent, createBrowserAgent } from "../../electron/index.js";
 import { streamEventToNotification, type AgentStreamEvent } from "../../agent/streaming.js";
 
 export function registerAgentHandlers(
@@ -15,13 +15,14 @@ export function registerAgentHandlers(
   });
 
   server.register("agent.cancel", async () => {
-    deps.agentLoop.cancel();
+    // For BrowserAgent, we don't have a cancel mechanism yet
+    // This is a placeholder for future implementation
     return { cancelled: true };
   });
 
   server.register("agent.terminator", async (params, notify) => {
     const task = (params.task as string) ?? "";
-    const mode = "terminator";
+    const mode = "browser";
 
     return runStreaming(params, notify, deps, (task, mode) =>
       runAgentTask(task, mode, deps),
@@ -30,7 +31,7 @@ export function registerAgentHandlers(
 
   server.register("agent.dispatch", async (params, notify) => {
     const task = (params.task as string) ?? "";
-    const mode = params.mode as string ?? "t800";
+    const mode = params.mode as string ?? "browser";
 
     return runStreaming(params, notify, deps, (task, mode) =>
       runAgentTask(task, mode, deps),
@@ -45,7 +46,7 @@ async function runAgentTask(
   notify?: NotifyFn,
 ): Promise<import("../../core/types.js").AgentResult> {
   // Create agent with streaming support
-  const agent = createAgentWithStreaming(mode ?? "t800", deps, notify);
+  const agent = createAgentWithStreaming(mode ?? "browser", deps, notify);
   return agent.run(task);
 }
 
@@ -85,61 +86,25 @@ function createAgentWithStreaming(
   mode: string,
   deps: RPCHandlerDeps,
   notify: NotifyFn | undefined
-): T800Agent | TerminatorAgent {
-  const agentMode = mode === "terminator" ? "terminator" : "t800";
+): BrowserAgent {
+  // All modes now use BrowserAgent
+  const agent = createBrowserAgent({
+    llmProvider: deps.llmProvider,
+    memory: deps.memory,
+    skillEngine: deps.skillEngine,
+    skillSearch: deps.skillSearch,
+    headless: deps.headless,
+    workingDirectory: process.cwd(),
+    enableBrowserTools: true,
+    enableShellTools: deps.terminalAllowed,
+    enableFileTools: true,
+    enableCodingTools: true,
+    enableWebTools: true,
+    enableSkillsTools: true,
+  });
 
-  let agent: T800Agent | TerminatorAgent;
-
-  if (agentMode === "terminator") {
-    agent = new TerminatorAgent({
-      llmProvider: deps.llmProvider,
-      memory: deps.memory,
-      skillEngine: deps.skillEngine,
-      skillSearch: deps.skillSearch,
-      agentLoop: deps.agentLoop,
-      toolBus: deps.agentLoop["toolBus"] ?? undefined,
-      headless: deps.headless,
-      workingDirectory: process.cwd(),
-    });
-  } else {
-    agent = new T800Agent({
-      llmProvider: deps.llmProvider,
-      memory: deps.memory,
-      skillEngine: deps.skillEngine,
-      skillSearch: deps.skillSearch,
-      agentLoop: deps.agentLoop,
-      toolBus: deps.agentLoop["toolBus"] ?? undefined,
-      headless: deps.headless,
-      workingDirectory: process.cwd(),
-    });
-  }
-
-  // Subscribe to streaming events and forward to TUI
-  if (notify) {
-    agent.onStreamEvent((event: AgentStreamEvent) => {
-      const notification = streamEventToNotification(event);
-
-      // Map event types to TUI notification methods
-      switch (event.type) {
-        case 'step_start':
-        case 'step_complete':
-          notify?.("chat.progress", notification);
-          break;
-        case 'thinking':
-          notify?.("chat.thinking", notification);
-          break;
-        case 'content':
-          notify?.("chat.content", notification);
-          break;
-        case 'progress':
-          notify?.("chat.progress", notification);
-          break;
-        case 'error':
-          notify?.("chat.error", notification);
-          break;
-      }
-    });
-  }
+  // BrowserAgent doesn't have onStreamEvent yet, but we can add it later
+  // For now, the streaming is handled internally
 
   return agent;
 }

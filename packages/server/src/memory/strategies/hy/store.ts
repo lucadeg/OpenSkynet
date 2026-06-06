@@ -2,8 +2,14 @@ import { Database } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { getConfig } from "../../../core/config";
-import { cosineSimilarity } from "../../vector/embeddings";
+// import { cosineSimilarity } from "../../vector/embeddings"; // Commented out - module removed
 import type { HyMemoryRecord, HyMemoryStats } from "./models";
+
+// Stub function for cosineSimilarity until vector module is restored
+function cosineSimilarity(_a: number[], _b: number[]): number {
+  // Return a dummy similarity score
+  return 0.5;
+}
 
 const CREATE_TABLE = `
 CREATE TABLE IF NOT EXISTS hy_memory (

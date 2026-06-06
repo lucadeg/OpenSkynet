@@ -21,11 +21,10 @@ async function loadAndRegister(
     import("./handlers/schedule.js"),
     import("./handlers/model.js"),
     import("./handlers/auth.js"),
-    import("./handlers/terminal.js"),
     import("./handlers/record.js"),
-    import("./handlers/integration.js"),
     import("./handlers/checkpoint.js"),
     import("./handlers/sandbox.js"),
+    import("./handlers/project.js"),
   ]);
 
   mods[0].registerSystemHandlers(fakeServer as any, deps);
@@ -38,11 +37,10 @@ async function loadAndRegister(
   mods[7].registerScheduleHandlers(fakeServer as any, deps);
   mods[8].registerModelHandlers(fakeServer as any, deps);
   mods[9].registerAuthHandlers(fakeServer as any, deps);
-  mods[10].registerTerminalHandlers(fakeServer as any, deps);
-  mods[11].registerRecordHandlers(fakeServer as any, deps);
-  mods[12].registerIntegrationHandlers(fakeServer as any, deps);
-  mods[13].registerCheckpointHandlers(fakeServer as any, deps);
-  mods[14].registerSandboxHandlers(fakeServer as any, deps);
+  mods[10].registerRecordHandlers(fakeServer as any, deps);
+  mods[11].registerCheckpointHandlers(fakeServer as any, deps);
+  mods[12].registerSandboxHandlers(fakeServer as any, deps);
+  mods[13].registerProjectHandlers(fakeServer as any, deps);
 }
 
 export async function createRPCServerAsync(deps: RPCHandlerDeps): Promise<RPCServer> {
@@ -75,11 +73,10 @@ import { registerSessionHandlers } from "./handlers/sessions.js";
 import { registerScheduleHandlers } from "./handlers/schedule.js";
 import { registerModelHandlers } from "./handlers/model.js";
 import { registerAuthHandlers } from "./handlers/auth.js";
-import { registerTerminalHandlers } from "./handlers/terminal.js";
 import { registerRecordHandlers } from "./handlers/record.js";
-import { registerIntegrationHandlers } from "./handlers/integration.js";
 import { registerCheckpointHandlers } from "./handlers/checkpoint.js";
 import { registerSandboxHandlers } from "./handlers/sandbox.js";
+import { registerProjectHandlers } from "./handlers/project.js";
 
 export function createRPCServer(deps: RPCHandlerDeps): RPCServer {
   const server = new RPCServer();
@@ -103,11 +100,10 @@ export function createRPCServer(deps: RPCHandlerDeps): RPCServer {
   registerScheduleHandlers(fakeServer, deps);
   registerModelHandlers(fakeServer, deps);
   registerAuthHandlers(fakeServer, deps);
-  registerTerminalHandlers(fakeServer, deps);
   registerRecordHandlers(fakeServer, deps);
-  registerIntegrationHandlers(fakeServer, deps);
   registerCheckpointHandlers(fakeServer, deps);
   registerSandboxHandlers(fakeServer, deps);
+  registerProjectHandlers(fakeServer, deps);
 
   for (const [method, handler] of handlerMap) {
     server.register(method, handler);
@@ -145,11 +141,10 @@ export function buildHandlerMap(
   registerScheduleHandlers(fakeServer, deps);
   registerModelHandlers(fakeServer, deps);
   registerAuthHandlers(fakeServer, deps);
-  registerTerminalHandlers(fakeServer, deps);
   registerRecordHandlers(fakeServer, deps);
-  registerIntegrationHandlers(fakeServer, deps);
   registerCheckpointHandlers(fakeServer, deps);
   registerSandboxHandlers(fakeServer, deps);
+  registerProjectHandlers(fakeServer, deps);
 
   return handlerMap;
 }

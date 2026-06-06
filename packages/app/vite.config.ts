@@ -2,7 +2,9 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import path from "path";
 
-export default defineConfig(async () => ({
+export default defineConfig({
+  // Use relative paths for Electron compatibility
+  base: './',
   plugins: [react()],
   resolve: {
     alias: {
@@ -20,4 +22,4 @@ export default defineConfig(async () => ({
     minify: !process.env.DEBUG ? "esbuild" : false,
     sourcemaps: !!process.env.DEBUG,
   },
-}));
+});

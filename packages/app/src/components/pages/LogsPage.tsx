@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Download, Trash2, Bug, Info, AlertTriangle, AlertCircle, FileText, Search } from 'lucide-react';
 import { PageHeader } from '@/components/shared/PageHeader';
 import { Button } from '@/components/shared/Button';
@@ -13,8 +13,33 @@ export function LogsPage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [levelFilter, setLevelFilter] = useState<'all' | 'info' | 'warning' | 'error' | 'debug'>('all');
 
-  // TODO: Load real logs from backend
-  // For now, empty state
+  const apiBaseUrl = 'http://localhost:3001';
+
+  // Load logs from server
+  const loadLogs = async () => {
+    try {
+      const response = await fetch(`${apiBaseUrl}/api/logs?limit=100`);
+      if (response.ok) {
+        const data = await response.json();
+        const logEntries = (data.logs || []).map((log: any) => ({
+          id: log.id,
+          level: log.level as LogEntry['level'],
+          message: log.message,
+          source: log.source,
+          timestamp: new Date(log.timestamp),
+        }));
+        setLogs(logEntries);
+      }
+    } catch (error) {
+      console.error('Failed to load logs:', error);
+    }
+  };
+
+  useEffect(() => {
+    loadLogs();
+    const interval = setInterval(loadLogs, 5000); // Refresh every 5s
+    return () => clearInterval(interval);
+  }, []);
   const filteredLogs = logs.filter((log) => {
     const matchesSearch =
       log.message.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -59,8 +84,13 @@ export function LogsPage() {
     URL.revokeObjectURL(url);
   };
 
-  const handleClear = () => {
-    setLogs([]);
+  const handleClear = async () => {
+    try {
+      await fetch(`${apiBaseUrl}/api/logs`, { method: 'DELETE' });
+      setLogs([]);
+    } catch (error) {
+      console.error('Failed to clear logs:', error);
+    }
   };
 
   const errorCount = logs.filter((l) => l.level === 'error').length;

@@ -27,12 +27,12 @@ export function Sidebar() {
 
   return (
     <>
-      <a href="#main-content" className="skip-nav">
+      <a href="#main-content" className="sr-only focus:not-sr-only focus:absolute focus:top-4 focus:left-4 z-[100] bg-primary text-primary-foreground px-4 py-2 rounded">
         Skip to main content
       </a>
       <aside
         className={cn(
-          'fixed left-0 top-0 h-full flex flex-col z-50',
+          'h-full flex flex-col',
           'transition-all duration-200 ease-out',
           'bg-background text-foreground border-r border-border',
           sidebarOpen ? 'w-56' : 'w-12'
@@ -40,15 +40,15 @@ export function Sidebar() {
         role="navigation"
         aria-label="Main navigation"
       >
-        <div className="h-10 flex items-center justify-between px-3 border-b border-border">
+        <div className="h-10 flex items-center justify-between px-3 border-b border-border flex-shrink-0">
           <div className="flex items-center gap-2">
             {sidebarOpen && (
-              <span className="text-sm font-medium">
+              <span className="text-sm font-medium whitespace-nowrap">
                 OpenSkynet
               </span>
             )}
           </div>
-          <div className={cn('flex items-center gap-0', !sidebarOpen && 'mx-auto')}>
+          <div className={cn('flex items-center gap-1', !sidebarOpen && 'mx-auto')}>
             <Button
               variant="ghost"
               size="sm"
@@ -92,7 +92,7 @@ export function Sidebar() {
               </div>
             </nav>
 
-            <div className="flex items-center p-2 border-t border-border min-h-[38px]">
+            <div className="flex items-center p-2 border-t border-border min-h-[38px] flex-shrink-0">
               <SidebarStatus />
             </div>
           </>

@@ -6,7 +6,6 @@
     "packages/app"
   ],
   "scripts": {
-    "tui": "bun run packages/server/src/tui-runner.ts",
     "backend": "bun run packages/server/src/index.ts --mode api",
     "desktop": "if ! lsof -ti:3001 > /dev/null 2>&1; then echo 'Starting backend...'; bun run packages/server/src/index.ts --mode api & sleep 2; fi && cd packages/app && npm start",
     "app": "cd packages/app && npm start",
@@ -30,9 +29,6 @@
     "vite-plugin-dts": "^5.0.2"
   },
   "dependencies": {
-    "@opentui/core": "^0.3.2",
-    "@opentui/react": "^0.3.2",
-    "@opentui/solid": "0.3.2",
     "@radix-ui/react-avatar": "^1.1.11",
     "@radix-ui/react-dialog": "^1.1.15",
     "@radix-ui/react-dropdown-menu": "^2.1.16",
@@ -42,7 +38,6 @@
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "lucide-react": "^1.17.0",
-    "solid-js": "1.9.12",
     "tailwind-merge": "^3.6.0"
   }
 }

@@ -1,13 +1,23 @@
 /**
- * @deprecated Old agent system. Use T800Agent and TerminatorAgent from src/electron/agent instead.
+ * OpenSkynet Agent System
  *
- * This module contains the legacy agent architecture that has been replaced by:
- * - T800Agent: Direct execution agent with all tools
- * - TerminatorAgent: Orchestrator for complex multi-step tasks
+ * Primary agent:
+ * - BrowserAgent: Browser-first agent with comprehensive tools
  *
- * The old agents (ManagerAgent, AgentRunner, etc.) have been removed.
- * Only core infrastructure, monitoring, and utilities are kept for backward compatibility.
+ * Core infrastructure:
+ * - AgentLoop: Core execution loop
+ * - ToolBus: Tool registration and execution
+ * - Monitoring: Budget, audit, safety
+ *
+ * Legacy (kept for compatibility):
+ * - CheckpointManager, ContextCompressor, ProgressTracker
+ * - Soul, prompts, locales
+ * - Skills system
  */
+
+// Primary agent
+export { BrowserAgent } from './BrowserAgent';
+export type { BrowserAgentOpts } from './BrowserAgent';
 
 // Core infrastructure
 export { AgentContext } from "./core/base";

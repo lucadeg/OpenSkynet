@@ -1,4 +1,4 @@
-import { computeEmbedding, cosineSimilarity } from "../../vector/embeddings";
+// import { computeEmbedding, cosineSimilarity } from "../../vector/embeddings"; // Commented out - module removed
 import type { HyMemoryRecord } from "./models";
 import type { MemoryType } from "../../../core/types";
 import type { HyMemoryStore } from "./store";
@@ -14,6 +14,10 @@ export class Retriever {
     query: string,
     limit = 10,
   ): Array<HyMemoryRecord & { score: number }> {
+    // TODO: Re-implement when vector embeddings are available
+    // For now, return empty results as semantic search can't work without embeddings
+    return [];
+    /*
     const queryEmbedding = computeEmbedding(query);
     const results = this.store.search(queryEmbedding, limit * 2);
 
@@ -44,6 +48,7 @@ export class Retriever {
 
     boosted.sort((a, b) => b.score - a.score);
     return boosted.slice(0, limit);
+    */
   }
 
   retrieveByType(type: MemoryType, limit = 20): HyMemoryRecord[] {

@@ -14,11 +14,13 @@ import { CronManager } from "./scheduler/cron";
 import { AgentLoop } from "./agent/loop";
 import { CheckpointManager } from "./agent/memory/checkpoint";
 import { Changelog } from "./memory/utils/changelog";
-// import { RecordingManager } from "./agent/recording/manager"; // TODO: RecordingManager not found
+import { RecordingManager } from "./agent/recording/manager";
 import { BrowserSession } from "./browser/session";
 import { BrowserController } from "./browser/controller";
 import { createAgentToolRegistry } from "./agent/tools";
-import { cleanupBrowserTools } from "./agent/tools/browser-tools";
+import { cleanupBrowserTools, setProjectManager } from "./agent/tools/browser-tools";
+import { ProjectManager } from "./project/manager";
+import { sandboxSessionManager } from "./sandbox/SessionManager";
 import type { RPCHandlerDeps } from "./rpc/deps";
 
 function parseMode(argv: string[]): "rpc" | "api" | "all" {
@@ -63,10 +65,21 @@ async function main() {
   const cronManager = new CronManager();
   const changelog = new Changelog();
   const checkpointManager = new CheckpointManager();
-  // const recordingManager = new RecordingManager(); // TODO: RecordingManager not found
-  const recordingManager = null as any; // Temporarily null until RecordingManager is restored
+  const recordingManager = new RecordingManager();
 
   const headless = (process.env.SEDIMAN_HEADLESS ?? "true") === "true";
+
+  const projectManager = new ProjectManager({
+    llmProvider,
+    memory,
+    skillEngine,
+    headless,
+    terminalAllowed: false,
+  });
+  await projectManager.ensureDefaultProject();
+  setProjectManager(projectManager);
+  sandboxSessionManager.setProjectManager(projectManager);
+
   const browserSession = new BrowserSession({
     headless,
     stealth: config.stealthEnabled,
@@ -74,13 +87,17 @@ async function main() {
     userDataDir: config.browserProfileDir,
   });
 
-  const browserController = new BrowserController(browserSession);
+  const browserController = new BrowserController({
+    headless,
+    userDataDir: config.browserProfileDir,
+  });
 
   const toolRegistry = createAgentToolRegistry({
     terminalAllowed: false,
     memoryManager: memory,
     skillEngine,
     enableBrowserTools: true,
+    browserController,
   });
 
   const agentLoop = new AgentLoop({
@@ -96,6 +113,7 @@ async function main() {
     llmProvider,
     browserSession,
     browserController,
+    projectManager,
     memory,
     skillEngine,
     agentLoop,
@@ -120,6 +138,7 @@ async function main() {
     cronManager,
     recordingManager,
     agentLoop,
+    projectManager,
   };
 
   const servers: { stop: () => Promise<void> }[] = [];
@@ -182,13 +201,28 @@ async function startRpcFast(logger: ReturnType<typeof createLogger>) {
   const cronManager = new CronManager();
   const changelog = new Changelog();
   const checkpointManager = new CheckpointManager();
+
+  const projectManager = new ProjectManager({
+    llmProvider,
+    memory,
+    skillEngine,
+    headless,
+    terminalAllowed: false,
+  });
+  await projectManager.ensureDefaultProject();
+  setProjectManager(projectManager);
+  sandboxSessionManager.setProjectManager(projectManager);
+
   const browserSession = new BrowserSession({
     headless,
     stealth: config.stealthEnabled,
     proxy: config.stealthProxy || undefined,
     userDataDir: config.browserProfileDir,
   });
-  const browserController = new BrowserController(browserSession);
+  const browserController = new BrowserController({
+    headless,
+    userDataDir: config.browserProfileDir,
+  });
   const agentLoop = new AgentLoop({
     llmProvider,
     browserSession,
@@ -201,6 +235,7 @@ async function startRpcFast(logger: ReturnType<typeof createLogger>) {
     llmProvider,
     browserSession,
     browserController,
+    projectManager,
     memory,
     skillEngine,
     agentLoop,

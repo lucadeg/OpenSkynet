@@ -3,6 +3,25 @@ const { contextBridge, ipcRenderer } = require('electron');
 // Expose protected methods that allow the renderer process to use
 // the ipcRenderer without exposing the entire object
 contextBridge.exposeInMainWorld('electronAPI', {
+  // Browser visibility control
+  browserShow: () => ipcRenderer.invoke('browser-show'),
+  browserHide: () => ipcRenderer.invoke('browser-hide'),
+
+  // Browser control methods
+  browserNavigate: (url) => ipcRenderer.invoke('browser-navigate', url),
+  browserBack: () => ipcRenderer.invoke('browser-back'),
+  browserForward: () => ipcRenderer.invoke('browser-forward'),
+  browserRefresh: () => ipcRenderer.invoke('browser-refresh'),
+  browserGetState: () => ipcRenderer.invoke('browser-get-state'),
+  browserScreenshot: () => ipcRenderer.invoke('browser-screenshot'),
+
+  // Agent action listener (for visual feedback)
+  onAgentAction: (callback) => {
+    const listener = (event, action) => callback(action);
+    ipcRenderer.on('agent-action', listener);
+    return () => ipcRenderer.removeListener('agent-action', listener);
+  },
+
   // File operations
   selectFile: () => ipcRenderer.invoke('dialog:selectFile'),
   selectFiles: () => ipcRenderer.invoke('dialog:selectFiles'),

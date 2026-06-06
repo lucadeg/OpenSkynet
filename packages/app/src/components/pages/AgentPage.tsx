@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
-import { Monitor, Paperclip, X } from 'lucide-react';
+import { Monitor, Paperclip, X, Send } from 'lucide-react';
 import { useChatStore } from '@/stores/useChatStore';
 import { useSandboxStore } from '@/stores/useSandboxStore';
 import { useAppStore } from '@/stores/useAppStore';
@@ -12,13 +12,6 @@ import { StreamingIndicator } from '@/components/agent/StreamingIndicator';
 import { FileUploadZone } from '@/components/shared/FileUploadZone';
 import { cn } from '@/lib/utils';
 
-const SUGGESTIONS = [
-  'What can you do?',
-  'Help me browse a website',
-  'Analyze this PDF',
-  'Extract data from this document',
-  'Record a new skill',
-];
 
 interface AttachedFile {
   id: string;
@@ -181,7 +174,9 @@ export function AgentPage() {
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
+    // Allow default behavior (Enter for new line)
+    // Only send with Cmd/Ctrl+Enter (Apple-style)
+    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
       e.preventDefault();
       handleSend();
     }
@@ -236,57 +231,48 @@ export function AgentPage() {
 
   return (
     <div
-      className={cn(
-        'flex flex-col h-full bg-background transition-all duration-200',
-        isDragOver && 'ring-2 ring-primary ring-inset'
-      )}
+      className="flex flex-col h-full w-full overflow-hidden bg-background"
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
     >
-      {/* Main Chat Area */}
-      <ScrollArea className="flex-1">
-        <div
-          ref={scrollRef}
-          className={cn(
-            "mx-auto transition-all duration-200 w-full px-4",
-            hasMessages ? "max-w-4xl py-4 space-y-3" : "max-w-2xl py-16"
-          )}
-        >
-          {hasMessages ? (
-            activeConversation?.messages.map((message) => (
-              <MessageBubble key={message.id} message={message} />
-            ))
-          ) : (
-            <div className="flex flex-col items-center justify-center text-center space-y-6 py-16">
-              <div>
-                <h2 className="text-sm font-medium text-foreground">
-                  New conversation
-                </h2>
-                <p className="text-xs text-muted-foreground mt-1">
-                  Drag & drop PDFs, documents, or images to analyze, or try a suggestion below.
-                </p>
+      {/* Messages Area */}
+      <div className="flex-1 overflow-hidden bg-gradient-to-b from-background to-muted/20">
+        <ScrollArea className="h-full">
+          <div
+            ref={scrollRef}
+            className={cn(
+              "mx-auto px-6 py-8",
+              hasMessages ? "max-w-4xl space-y-6" : "max-w-2xl min-h-[60vh] flex items-center justify-center"
+            )}
+          >
+            {hasMessages ? (
+              activeConversation?.messages.map((message) => (
+                <MessageBubble key={message.id} message={message} />
+              ))
+            ) : (
+              <div className="flex flex-col items-center justify-center text-center py-16 space-y-4">
+                <div className="w-20 h-20 rounded-full bg-gradient-to-br from-primary/20 to-primary/5 flex items-center justify-center">
+                  <Monitor className="w-10 h-10 text-primary/60" />
+                </div>
+                <div className="space-y-2">
+                  <h2 className="text-2xl font-semibold tracking-tight text-foreground">
+                    New conversation
+                  </h2>
+                  <p className="text-base text-muted-foreground">
+                    Ask me anything. I can help with browsing, automation, and more.
+                  </p>
+                </div>
               </div>
-              <div className="grid grid-cols-2 gap-2 max-w-sm">
-                {SUGGESTIONS.map((suggestion) => (
-                  <button
-                    key={suggestion}
-                    onClick={() => handleSend(suggestion)}
-                    className="text-left text-xs px-3 py-2 rounded border border-border bg-card text-muted-foreground hover:text-foreground hover:bg-accent/50 transition-colors"
-                  >
-                    {suggestion}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
-      </ScrollArea>
+            )}
+          </div>
+        </ScrollArea>
+      </div>
 
       {/* Drag Overlay */}
       {isDragOver && (
-        <div className="absolute inset-0 bg-primary/10 backdrop-blur-sm flex items-center justify-center z-50">
-          <div className="text-center p-8 bg-background border-2 border-primary rounded-xl shadow-lg">
+        <div className="fixed inset-0 z-50 bg-primary/10 backdrop-blur-sm flex items-center justify-center">
+          <div className="text-center p-8 bg-background border-2 border-primary rounded-xl shadow-lg max-w-md">
             <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-primary/10 flex items-center justify-center">
               <Paperclip className="w-8 h-8 text-primary" />
             </div>
@@ -306,21 +292,21 @@ export function AgentPage() {
       )}
 
       {/* Input Area */}
-      <div className="p-4 border-t border-border bg-background">
-        <div className="max-w-4xl mx-auto space-y-2">
+      <div className="flex-shrink-0 border-t border-border/50 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
+        <div className="max-w-4xl mx-auto px-6 py-4 space-y-3">
           {/* Attached Files */}
           {attachedFiles.length > 0 && (
-            <div className="flex flex-wrap gap-2 p-2 bg-muted/50 rounded-lg">
+            <div className="flex flex-wrap gap-2 p-3 bg-muted/30 rounded-xl border border-border/50">
               {attachedFiles.map((file) => (
                 <div
                   key={file.id}
-                  className="flex items-center gap-2 px-3 py-1.5 bg-background border border-input rounded-md text-sm"
+                  className="flex items-center gap-2 px-3 py-2 bg-background border border-border/50 rounded-lg text-sm shadow-sm"
                 >
-                  <Paperclip className="w-3 h-3 text-muted-foreground" />
-                  <span className="max-w-[150px] truncate">{file.name}</span>
+                  <Paperclip className="w-3.5 h-3.5 text-muted-foreground" />
+                  <span className="max-w-[150px] truncate font-medium">{file.name}</span>
                   <button
                     onClick={() => removeAttachment(file.id)}
-                    className="text-muted-foreground hover:text-destructive transition-colors"
+                    className="text-muted-foreground hover:text-destructive transition-colors rounded-full p-0.5 hover:bg-destructive/10"
                   >
                     <X className="w-3 h-3" />
                   </button>
@@ -329,7 +315,7 @@ export function AgentPage() {
             </div>
           )}
 
-          {/* File Upload Zone (Collapsible) */}
+          {/* File Upload Zone */}
           {showFileUpload && (
             <div className="relative">
               <FileUploadZone
@@ -339,7 +325,7 @@ export function AgentPage() {
               />
               <button
                 onClick={() => setShowFileUpload(false)}
-                className="absolute top-2 right-2 p-1 rounded hover:bg-destructive/10 hover:text-destructive transition-colors"
+                className="absolute top-3 right-3 p-1.5 rounded-lg hover:bg-destructive/10 hover:text-destructive transition-all bg-background/80 backdrop-blur shadow-sm"
               >
                 <X className="w-4 h-4" />
               </button>
@@ -347,7 +333,7 @@ export function AgentPage() {
           )}
 
           {/* Input Controls */}
-          <div className="flex items-end gap-2">
+          <div className="flex items-end gap-3">
             {/* File Upload Toggle */}
             <Button
               variant="ghost"
@@ -355,8 +341,8 @@ export function AgentPage() {
               onClick={() => setShowFileUpload(!showFileUpload)}
               disabled={isStreaming}
               className={cn(
-                "flex-shrink-0",
-                showFileUpload && "bg-accent"
+                "flex-shrink-0 h-11 w-11 rounded-xl transition-all",
+                showFileUpload ? "bg-primary text-primary-foreground shadow-sm" : "hover:bg-muted"
               )}
               title="Attach files"
             >
@@ -364,30 +350,39 @@ export function AgentPage() {
             </Button>
 
             {/* Text Input */}
-            <Textarea
-              ref={textareaRef}
-              placeholder="Type a message or drag & drop files..."
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={handleKeyDown}
-              disabled={isStreaming}
-              className="text-xs min-h-[60px] resize-none w-full p-3 rounded-sm border border-input bg-background text-foreground"
-            />
+            <div className="flex-1 relative">
+              <Textarea
+                ref={textareaRef}
+                placeholder="Type a message..."
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={handleKeyDown}
+                disabled={isStreaming}
+                className="min-h-[52px] resize-none pr-14 rounded-xl border-border/50 focus:border-primary/50 focus:ring-0"
+              />
 
-            {/* Send Button */}
-            <Button
-              size="sm"
-              onClick={() => handleSend()}
-              disabled={!input.trim() || isStreaming}
-              className={cn(
-                "text-xs flex-shrink-0",
-                !input.trim() || isStreaming
-                  ? "opacity-50 cursor-not-allowed"
-                  : ""
-              )}
-            >
-              {isStreaming ? 'Sending...' : 'Send'}
-            </Button>
+              {/* Send Button - Absolute positioned */}
+              <div className="absolute right-2 bottom-2">
+                <Button
+                  size="sm"
+                  onClick={() => handleSend()}
+                  disabled={!input.trim() || isStreaming}
+                  className={cn(
+                    "h-9 w-9 p-0 rounded-lg shadow-sm transition-all",
+                    input.trim() && !isStreaming ? "bg-primary text-primary-foreground hover:shadow-md" : "opacity-50 cursor-not-allowed bg-muted"
+                  )}
+                >
+                  {isStreaming ? (
+                    <div className="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin" />
+                  ) : (
+                    <>
+                      <Send className="h-4 w-4" />
+                      <span className="sr-only">Send message</span>
+                    </>
+                  )}
+                </Button>
+              </div>
+            </div>
 
             {/* Browser Toggle */}
             <Button
@@ -395,7 +390,10 @@ export function AgentPage() {
               size="sm"
               onClick={toggleSandbox}
               disabled={isStreaming}
-              className="flex-shrink-0"
+              className={cn(
+                "flex-shrink-0 h-11 w-11 rounded-xl transition-all",
+                "hover:bg-muted"
+              )}
               title="Toggle browser"
             >
               <Monitor className="w-4 h-4" />
@@ -404,15 +402,11 @@ export function AgentPage() {
 
           {/* Helper Text */}
           <div className="flex items-center justify-between text-xs text-muted-foreground">
-            <div className="flex items-center gap-2">
-              <span>Enter to send</span>
-              <span className="mx-1">·</span>
-              <span>Shift+Enter for new line</span>
-              {model && <span className="ml-2 text-muted-foreground/60">{model}</span>}
+            <div className="flex items-center gap-3">
+              {attachedFiles.length > 0 && <span>{attachedFiles.length} file(s) attached</span>}
+              <span className="text-[10px] opacity-60">⌘/Ctrl+Enter to send</span>
             </div>
-            {attachedFiles.length > 0 && (
-              <span>{attachedFiles.length} file(s) attached</span>
-            )}
+            {model && <span className="px-2 py-0.5 bg-muted rounded text-[11px] font-medium">{model}</span>}
           </div>
         </div>
       </div>

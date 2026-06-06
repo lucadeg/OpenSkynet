@@ -68,11 +68,17 @@ export function SessionsPage() {
     window.dispatchEvent(new CustomEvent('navigate-to-agent'));
   };
 
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+
   const handleDeleteSession = async (sessionId: string) => {
-    if (confirm('Delete this session?')) {
-      deleteConversation(sessionId);
-      setSessions(prev => prev.filter(s => s.id !== sessionId));
+    if (confirmDeleteId !== sessionId) {
+      setConfirmDeleteId(sessionId);
+      setTimeout(() => setConfirmDeleteId(null), 3000);
+      return;
     }
+    setConfirmDeleteId(null);
+    deleteConversation(sessionId);
+    setSessions(prev => prev.filter(s => s.id !== sessionId));
   };
 
   const filteredSessions = sessions.filter(session => {
@@ -202,9 +208,9 @@ export function SessionsPage() {
                         </div>
                       </div>
                       <Button
-                        variant="ghost"
+                        variant={confirmDeleteId === session.id ? 'destructive' : 'ghost'}
                         size="sm"
-                        className="h-8 w-8 p-0 text-destructive"
+                        className="h-8 w-8 p-0"
                         onClick={(e) => {
                           e.stopPropagation();
                           handleDeleteSession(session.id);

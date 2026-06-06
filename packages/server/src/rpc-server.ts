@@ -118,11 +118,12 @@ async function main() {
     import("./rpc/handlers/sessions.js"),
     import("./rpc/handlers/schedule.js"),
     import("./rpc/handlers/auth.js"),
-    import("./rpc/handlers/terminal.js"),
+    // import("./rpc/handlers/terminal.js"), // Terminal handler removed
     import("./rpc/handlers/record.js"),
-    import("./rpc/handlers/integration.js"),
+    // import("./rpc/handlers/integration.js"), // Integration handler removed
     import("./rpc/handlers/checkpoint.js"),
     import("./rpc/handlers/sandbox.js"),
+    import("./rpc/handlers/project.js"),
   ]);
 
   const { getConfig } = await import("./core/config.js");
@@ -139,6 +140,9 @@ async function main() {
   const { BrowserController } = await import("./browser/controller.js");
   const { createProvider } = await import("./llm/provider.js");
   const { AgentLoop } = await import("./agent/loop.js");
+  const { ProjectManager } = await import("./project/manager.js");
+  const { setProjectManager } = await import("./agent/tools/browser-tools.js");
+  const { sandboxSessionManager } = await import("./sandbox/SessionManager.js");
 
   const headless = (process.env.SEDIMAN_HEADLESS ?? "true") === "true";
   const memory = new FileMemoryStrategy();
@@ -149,6 +153,18 @@ async function main() {
     process.env.SEDIMAN_BASE_URL,
     process.env.SEDIMAN_API_KEY,
   );
+
+  const projectManager = new ProjectManager({
+    llmProvider,
+    memory,
+    skillEngine,
+    headless,
+    terminalAllowed: false,
+  });
+  await projectManager.ensureDefaultProject();
+  setProjectManager(projectManager);
+  sandboxSessionManager.setProjectManager(projectManager);
+
   const browserSession = new BrowserSession({
     headless,
     stealth: config.stealthEnabled,
@@ -166,7 +182,11 @@ async function main() {
   const deps = {
     llmProvider,
     browserSession,
-    browserController: new BrowserController(browserSession),
+    browserController: new BrowserController({
+      headless,
+      userDataDir: config.browserProfileDir,
+    }),
+    projectManager,
     memory,
     skillEngine,
     agentLoop,

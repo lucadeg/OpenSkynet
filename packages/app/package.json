@@ -6,6 +6,7 @@
   "main": "electron/main.cjs",
   "scripts": {
     "dev": "vite",
+    "dev:watch": "vite --port 1420",
     "build": "tsc && vite build",
     "preview": "vite preview",
     "start": "electron-forge start",

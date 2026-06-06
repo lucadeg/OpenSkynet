@@ -26,26 +26,46 @@ export function createAgentRoutes(deps: {
           controller.enqueue(encoder.encode(sseEvent(event, data)));
         };
 
-        const provider = deps.llmProvider as unknown as Record<string, unknown>;
-        const origTokenCb = provider._tokenCallback as
-          | ((tokens: number) => void)
-          | null;
-
-        provider._tokenCallback = (tokens: number) => {
-          enqueue("token", { delta: tokens, phase: "responding" });
-        };
+        // Subscribe to agent loop streaming events
+        const unsubscribe = deps.agentLoop.onStreamEvent((streamEvent) => {
+          switch (streamEvent.type) {
+            case 'step_start':
+              enqueue("progress", {
+                phase: streamEvent.phase,
+                action: streamEvent.action,
+                detail: streamEvent.detail,
+                url: streamEvent.url,
+              });
+              break;
+            case 'step_complete':
+              enqueue("progress", {
+                phase: streamEvent.phase,
+                action: streamEvent.action,
+                observation: streamEvent.observation,
+                success: streamEvent.success,
+              });
+              break;
+            case 'thinking':
+              enqueue("chunk", { delta: streamEvent.content, phase: streamEvent.phase });
+              break;
+            case 'content':
+              enqueue("chunk", { delta: streamEvent.content, phase: "responding" });
+              break;
+            case 'progress':
+              enqueue("progress", {
+                phase: streamEvent.phase,
+                iteration: streamEvent.iteration,
+                maxIterations: streamEvent.maxIterations,
+              });
+              break;
+            case 'error':
+              enqueue("error", { error: streamEvent.error });
+              break;
+          }
+        });
 
         try {
           const result = await deps.agentLoop.run(body.task, body.mode);
-
-          for (const step of result.steps) {
-            enqueue("step", {
-              phase: step.phase,
-              action: `[${step.action.toUpperCase()}] ${step.action}`,
-              detail: step.detail,
-              observation: step.observation,
-            });
-          }
 
           enqueue("done", {
             success: result.success,
@@ -60,7 +80,7 @@ export function createAgentRoutes(deps: {
             result: err instanceof Error ? err.message : String(err),
           });
         } finally {
-          provider._tokenCallback = origTokenCb;
+          unsubscribe();
           controller.close();
         }
       },

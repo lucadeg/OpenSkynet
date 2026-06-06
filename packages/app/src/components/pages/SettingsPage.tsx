@@ -5,6 +5,7 @@ import { ToggleSwitch } from '@/components/shared/ToggleSwitch';
 import { ScrollArea } from '@/components/shared/ScrollArea';
 import { ThemePicker } from '@/components/shared/ThemePicker';
 import { useAppStore } from '@/stores/useAppStore';
+import { toast } from 'sonner';
 
 export function SettingsPage() {
   const apiBaseUrl = useAppStore((state) => state.apiBaseUrl);
@@ -38,7 +39,7 @@ export function SettingsPage() {
         .then(setAppVersion)
         .catch(() => setAppVersion('0.3.2'));
 
-      setPlatform(window.electronAPI.platform || navigator.platform);
+      setPlatform(window.electronAPI.getPlatform() || navigator.platform);
     } else {
       setAppVersion('0.3.2');
       setPlatform(navigator.platform);
@@ -48,6 +49,7 @@ export function SettingsPage() {
   const handleSave = () => {
     setSettings(localSettings);
     setHasChanges(false);
+    toast.success('Settings saved');
   };
 
   const handleReset = () => {

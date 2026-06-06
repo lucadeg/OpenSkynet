@@ -2,9 +2,11 @@ import { useEffect, lazy, Suspense } from 'react';
 import { useAppStore } from '@/stores/useAppStore';
 import { AppLayout } from '@/components/layout/AppLayout';
 import { ErrorBoundary } from '@/components/shared/ErrorBoundary';
-import { SandboxPanel } from '@/components/sandbox';
+import { CommandPalette } from '@/components/shared/CommandPalette';
 import { useRPCConnection } from '@/hooks/useRPCConnection';
+import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts';
 import { initializeRendererIPC } from '@/services/browser';
+import { Toaster } from 'sonner';
 
 const AgentPage = lazy(() => import('@/components/pages/AgentPage').then(m => ({ default: m.AgentPage })));
 const ModelsPage = lazy(() => import('@/components/pages/ModelsPage').then(m => ({ default: m.ModelsPage })));
@@ -29,6 +31,7 @@ function App() {
   const colorTheme = useAppStore((state) => state.colorTheme);
 
   useRPCConnection();
+  useKeyboardShortcuts();
 
   useEffect(() => {
     initializeRendererIPC();
@@ -75,13 +78,12 @@ function App() {
   return (
     <ErrorBoundary>
       <AppLayout>
-        <ErrorBoundary>
-          <Suspense fallback={<PageLoader />}>
-            {renderPage()}
-          </Suspense>
-        </ErrorBoundary>
-        <SandboxPanel />
+        <Suspense fallback={<PageLoader />}>
+          {renderPage()}
+        </Suspense>
       </AppLayout>
+      <Toaster position="bottom-right" richColors closeButton />
+      <CommandPalette />
     </ErrorBoundary>
   );
 }

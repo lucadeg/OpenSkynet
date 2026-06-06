@@ -1,6 +1,6 @@
 export { BaseMemoryStrategy } from "./strategy";
 export { FileMemoryStrategy } from "./strategies/file-memory";
-export { HyMemoryStrategy } from "./strategies/hy/strategy";
+// export { HyMemoryStrategy } from "./strategies/hy/strategy"; // Commented out due to missing vector/embeddings dependency
 export {
   getAllEntries,
   addEntry,
@@ -21,16 +21,17 @@ export type {
   TrajectoryStep,
   TrajectoryPreference,
 } from "./trajectories";
-export { VectorStore } from "./vector/vector-store";
-export type {
-  VectorSearchResult,
-  VectorEntry,
-} from "./vector/vector-store";
-export {
-  computeEmbedding,
-  cosineSimilarity,
-  computeSimilarity,
-} from "./vector/embeddings";
+// Vector store and embeddings modules removed - commenting out exports
+// export { VectorStore } from "./vector/vector-store";
+// export type {
+//   VectorSearchResult,
+//   VectorEntry,
+// } from "./vector/vector-store";
+// export {
+//   computeEmbedding,
+//   cosineSimilarity,
+//   computeSimilarity,
+// } from "./vector/embeddings";
 export {
   extractMemoriesFromConversation,
   Changelog,

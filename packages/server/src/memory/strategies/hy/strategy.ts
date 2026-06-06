@@ -2,12 +2,18 @@ import { randomUUID } from "node:crypto";
 import type { MemoryEntry, MemoryTarget, MemoryType } from "../../../core/types";
 import { getConfig } from "../../../core/config";
 import logger from "../../../core/logging";
-import { computeEmbedding } from "../../vector/embeddings";
+// import { computeEmbedding } from "../../vector/embeddings"; // Commented out - module removed
 import { BaseMemoryStrategy } from "../../strategy";
 import type { HyMemoryStats } from "./models";
 import { HyMemoryStore } from "./store";
 import { MemoryExtractor } from "./extractor";
 import { MemoryGate } from "./gate";
+
+// Stub function for computeEmbedding until vector module is restored
+function computeEmbedding(_text: string): number[] {
+  // Return a dummy embedding vector of zeros
+  return new Array(1536).fill(0); // Standard OpenAI embedding size
+}
 import { Schemer } from "./schemer";
 import { Retriever } from "./retriever";
 import { Merger } from "./merger";

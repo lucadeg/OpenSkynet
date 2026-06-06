@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
-import { Trash2, Search, Package, Code, X, Folder, ExternalLink, Circle, Square } from 'lucide-react';
+import { Trash2, Search, Package, Code, X, Folder, ExternalLink, Circle, Square, Download } from 'lucide-react';
 import { PageHeader } from '@/components/shared/PageHeader';
 import { Button } from '@/components/shared/Button';
 import { Input } from '@/components/shared/Input';
@@ -35,6 +35,7 @@ export function SkillsPage() {
     frameCount: 0,
   });
   const [activeSessions, setActiveSessions] = useState<ServerRecordingSession[]>([]);
+  const [installing, setInstalling] = useState<Set<string>>(new Set());
 
   const apiBaseUrl = 'http://localhost:3001';
 
@@ -45,6 +46,7 @@ export function SkillsPage() {
       const response = await fetch(`${apiBaseUrl}/api/skills`);
       if (response.ok) {
         const data = await response.json();
+        // Show all skills including external ones from 4xx API
         setSkills(data.skills || []);
       }
     } catch (error) {
@@ -58,7 +60,7 @@ export function SkillsPage() {
   // Load active recording sessions
   const loadActiveSessions = async () => {
     try {
-      const response = await fetch(`${apiBaseUrl}/api/record/active`);
+      const response = await fetch(`${apiBaseUrl}/api/skills/record/active`);
       if (response.ok) {
         const data = await response.json();
         setActiveSessions(data.sessions || []);
@@ -101,7 +103,7 @@ export function SkillsPage() {
 
   const handleStartRecording = async () => {
     try {
-      const response = await fetch(`${apiBaseUrl}/api/record/start`, {
+      const response = await fetch(`${apiBaseUrl}/api/skills/record/start`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: `Recording ${new Date().toLocaleTimeString()}` }),
@@ -125,10 +127,9 @@ export function SkillsPage() {
     if (!recording.sessionId) return;
 
     try {
-      const response = await fetch(`${apiBaseUrl}/api/record/stop`, {
+      const response = await fetch(`${apiBaseUrl}/api/skills/record/${recording.sessionId}/stop`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sessionId: recording.sessionId }),
       });
       if (response.ok) {
         const result = await response.json();
@@ -149,14 +150,18 @@ export function SkillsPage() {
     }
   };
 
-  const handleViewSkillCode = async (skillName: string) => {
+  const handleViewSkillCode = async (skillId: string) => {
     try {
-      const response = await fetch(`${apiBaseUrl}/api/skills/${encodeURIComponent(skillName)}`);
+      const response = await fetch(`${apiBaseUrl}/api/skills/${encodeURIComponent(skillId)}`);
       if (response.ok) {
         const skill = await response.json();
-        if (skill.skill) {
-          setCodeContent(JSON.stringify(skill.skill, null, 2));
-          setShowCode(skillName);
+        // API returns skill directly or in error format
+        const skillData = skill.error ? null : skill;
+        if (skillData) {
+          setCodeContent(JSON.stringify(skillData, null, 2));
+          setShowCode(skill.name || skillId);
+        } else {
+          console.error('Skill not found or error:', skill.error || skill.message);
         }
       }
     } catch (error) {
@@ -164,9 +169,9 @@ export function SkillsPage() {
     }
   };
 
-  const handleDeleteSkill = async (skillName: string) => {
+  const handleDeleteSkill = async (skillId: string) => {
     try {
-      const response = await fetch(`${apiBaseUrl}/api/skills/${encodeURIComponent(skillName)}`, {
+      const response = await fetch(`${apiBaseUrl}/api/skills/${encodeURIComponent(skillId)}`, {
         method: 'DELETE',
       });
       if (response.ok) {
@@ -178,6 +183,7 @@ export function SkillsPage() {
   };
 
   const handleInstallSkill = async (skillName: string) => {
+    setInstalling(prev => new Set(prev).add(skillName));
     try {
       const response = await fetch(`${apiBaseUrl}/api/hub/install`, {
         method: 'POST',
@@ -187,17 +193,20 @@ export function SkillsPage() {
 
       if (response.ok) {
         const result = await response.json();
-        if (result.installed) {
-          // Reload skills after installation
-          loadSkills();
-        } else {
-          console.error('Install failed:', result.message);
-        }
+        console.log('Skill installed:', result);
+        // Reload skills to update the list
+        await loadSkills();
       } else {
-        console.error('Install request failed:', response.status);
+        console.error('Failed to install skill:', await response.text());
       }
     } catch (error) {
       console.error('Failed to install skill:', error);
+    } finally {
+      setInstalling(prev => {
+        const next = new Set(prev);
+        next.delete(skillName);
+        return next;
+      });
     }
   };
 
@@ -372,27 +381,41 @@ export function SkillsPage() {
                                 variant="default"
                                 size="sm"
                                 onClick={() => handleInstallSkill(skill.name)}
+                                disabled={installing.has(skill.name)}
+                                className="h-7"
                               >
-                                <Package className="w-3 h-3 mr-1" />
-                                Install
+                                {installing.has(skill.name) ? (
+                                  <>
+                                    <div className="w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin mr-1" />
+                                    Installing...
+                                  </>
+                                ) : (
+                                  <>
+                                    <Download className="w-3 h-3 mr-1" />
+                                    Install
+                                  </>
+                                )}
                               </Button>
                             )}
                             <Button
                               variant="outline"
                               size="sm"
-                              onClick={() => handleViewSkillCode(skill.name)}
+                              onClick={() => handleViewSkillCode(skill.id)}
+                              className="h-7"
                             >
                               <Code className="w-3 h-3 mr-1" />
                               View
                             </Button>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => handleDeleteSkill(skill.name)}
-                              className="text-destructive"
-                            >
-                              <Trash2 className="w-3 h-3" />
-                            </Button>
+                            {skill.installed && (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => handleDeleteSkill(skill.id)}
+                                className="text-destructive h-7"
+                              >
+                                <Trash2 className="w-3 h-3" />
+                              </Button>
+                            )}
                           </div>
                         </div>
                       ))}

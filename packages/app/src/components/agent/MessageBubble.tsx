@@ -41,19 +41,18 @@ export const MessageBubble = memo(function MessageBubble({ message }: MessageBub
 
   return (
     <div className={cn(
-      'flex gap-2 group',
+      'flex gap-3 group animate-in',
       isUser ? 'justify-end' : 'justify-start'
     )}>
       <div className={cn(
-        'flex flex-col gap-0.5 max-w-[85%]',
+        'flex flex-col gap-1 max-w-[80%]',
         isUser && 'items-end'
       )}>
-        {/* Attachments */}
         {attachments && attachments.length > 0 && (
           <div className={cn(
             'flex flex-wrap gap-2 p-2 rounded-lg border',
             isUser
-              ? 'border-primary/20 bg-primary/10'
+              ? 'border-primary/20 bg-primary/5'
               : 'border-border bg-muted/50'
           )}>
             {attachments.map((attachment) => (
@@ -71,15 +70,15 @@ export const MessageBubble = memo(function MessageBubble({ message }: MessageBub
           </div>
         )}
 
-        {/* Message Content */}
         <div
           className={cn(
-            'relative border px-2 py-1 rounded-sm',
-            'text-xs leading-relaxed',
+            'relative px-3.5 py-2.5 rounded-lg',
+            'text-sm leading-relaxed',
             'transition-colors duration-150',
+            'shadow-[var(--shadow-xs)]',
             isUser
-              ? 'border-border bg-primary text-primary-foreground'
-              : 'border-border bg-muted text-foreground'
+              ? 'bg-primary text-primary-foreground'
+              : 'bg-card text-card-foreground border border-border'
           )}
         >
           <div className="markdown-content prose prose-sm max-w-none">
@@ -99,31 +98,32 @@ export const MessageBubble = memo(function MessageBubble({ message }: MessageBub
           <button
             onClick={handleCopy}
             className={cn(
-              'absolute top-1 right-1 p-0.5 rounded opacity-0 group-hover:opacity-100',
+              'absolute top-2 right-2 p-1 rounded-md opacity-0 group-hover:opacity-100',
               'transition-opacity duration-150',
-              isUser ? 'text-primary-foreground/70 hover:text-primary-foreground' : 'text-muted-foreground hover:text-foreground'
+              'hover:bg-black/10',
+              isUser ? 'text-primary-foreground/60 hover:text-primary-foreground' : 'text-muted-foreground hover:text-foreground'
             )}
             title="Copy message"
             aria-label="Copy message to clipboard"
           >
             {copied ? (
-              <Check className="w-2.5 h-2.5" />
+              <Check className="w-3.5 h-3.5" />
             ) : (
-              <Copy className="w-2.5 h-2.5" />
+              <Copy className="w-3.5 h-3.5" />
             )}
           </button>
 
           {isStreaming && !isUser && <span className="typing-cursor" />}
 
           {message.status === 'error' && (
-            <div className="mt-0.5 text-xs text-destructive">
+            <div className="mt-1 text-xs text-destructive">
               Failed to send
             </div>
           )}
         </div>
 
         {message.timestamp && (
-          <span className="text-[10px] text-muted-foreground px-0.5">
+          <span className="text-[10px] text-muted-foreground px-1">
             {formatRelativeTime(message.timestamp)}
           </span>
         )}
