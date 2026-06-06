@@ -19,7 +19,6 @@ import { BrowserSession } from "./browser/session";
 import { BrowserController } from "./browser/controller";
 import { createAgentToolRegistry } from "./agent/tools";
 import { cleanupBrowserTools } from "./agent/tools/browser-tools";
-import { sandboxSessionManager } from "./sandbox/SessionManager";
 import type { RPCHandlerDeps } from "./rpc/deps";
 
 function parseMode(argv: string[]): "rpc" | "api" | "all" {
@@ -39,6 +38,11 @@ async function main() {
 
   const logger = createLogger("server");
   const config = getConfig();
+
+  if (mode === "rpc") {
+    await startRpcFast(logger);
+    return;
+  }
 
   initDb();
 
@@ -71,7 +75,6 @@ async function main() {
 
   const browserController = new BrowserController(browserSession);
 
-  // Create tool registry with browser tools enabled
   const toolRegistry = createAgentToolRegistry({
     terminalAllowed: false,
     memoryManager: memory,
@@ -120,7 +123,7 @@ async function main() {
 
   const servers: { stop: () => Promise<void> }[] = [];
 
-  if (mode === "rpc" || mode === "all") {
+  if (mode === "all") {
     const rpcServer = createRPCServer(rpcDeps);
     const rpcSocket = process.env.SEDIMAN_RPC_SOCKET ?? "/tmp/sediman.sock";
     await rpcServer.listen(rpcSocket);
@@ -144,7 +147,6 @@ async function main() {
       }
     }
 
-    // Cleanup browser tools and close all browser instances
     try {
       await cleanupBrowserTools();
     } catch (err) {
@@ -162,6 +164,79 @@ async function main() {
   logger.info({ mode }, "sediman_server_ready");
 }
 
+async function startRpcFast(logger: ReturnType<typeof createLogger>) {
+  const config = getConfig();
+  const headless = (process.env.SEDIMAN_HEADLESS ?? "true") === "true";
+  const providerName = process.env.SEDIMAN_PROVIDER ?? "openai";
+  const modelName = process.env.SEDIMAN_MODEL;
+  const baseUrl = process.env.SEDIMAN_BASE_URL;
+  const apiKey = process.env.SEDIMAN_API_KEY;
+
+  const llmProvider = createProvider(providerName, modelName, baseUrl, apiKey);
+  const memory = new FileMemoryStrategy();
+  const skillEngine = new SkillEngine();
+  const hubClient = new HubClient();
+  const gitHubInstaller = new GitHubInstaller(config.skillsDir);
+  const skillSearch = new SkillSearchEngine(skillEngine);
+  const cronManager = new CronManager();
+  const changelog = new Changelog();
+  const checkpointManager = new CheckpointManager();
+  const browserSession = new BrowserSession({
+    headless,
+    stealth: config.stealthEnabled,
+    proxy: config.stealthProxy || undefined,
+    userDataDir: config.browserProfileDir,
+  });
+  const browserController = new BrowserController(browserSession);
+  const agentLoop = new AgentLoop({
+    llmProvider,
+    browserSession,
+    memory,
+    skillEngine,
+    headless,
+  });
+
+  const rpcDeps: RPCHandlerDeps = {
+    llmProvider,
+    browserSession,
+    browserController,
+    memory,
+    skillEngine,
+    agentLoop,
+    checkpointManager,
+    cronManager,
+    hubClient,
+    gitHubInstaller,
+    skillSearch,
+    changelog,
+    tasksCompleted: 0,
+    terminalAllowed: false,
+    headless,
+    sandboxMode: process.env.SEDIMAN_SANDBOX ?? "off",
+    activeRecording: null,
+  };
+
+  const rpcServer = createRPCServer(rpcDeps);
+  const rpcSocket = process.env.SEDIMAN_RPC_SOCKET ?? "/tmp/sediman.sock";
+  await rpcServer.listen(rpcSocket);
+  logger.info({ mode: "rpc", socket: rpcSocket }, "server_started");
+
+  memory.initialize().catch(() => {});
+
+  const shutdown = async (signal: string) => {
+    logger.info({ signal }, "shutting_down");
+    try { await rpcServer.stop(); } catch {}
+    try { await cleanupBrowserTools(); } catch {}
+    closeDb();
+    logger.info("shutdown_complete");
+    process.exit(0);
+  };
+
+  process.on("SIGINT", () => shutdown("SIGINT"));
+  process.on("SIGTERM", () => shutdown("SIGTERM"));
+  logger.info({ mode: "rpc" }, "sediman_server_ready");
+}
+
 main().catch((err) => {
   console.error("Fatal:", err instanceof Error ? err.message : err);
   process.exit(1);
@@ -176,5 +251,3 @@ export * from "./core/utils";
 export * from "./core/logging";
 export * from "./core/sentry";
 export { getDb, initDb, closeDb } from "./store/db";
-export * from "./sandbox/SessionManager";
-export { sandboxSessionManager } from "./sandbox/SessionManager";

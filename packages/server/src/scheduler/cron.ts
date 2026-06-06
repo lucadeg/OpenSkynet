@@ -51,12 +51,18 @@ export function validateCronExpr(expr: string): boolean {
 export class CronManager {
   private jobsDir: string;
   private resultsFile: string;
+  private _dirEnsured = false;
 
   constructor(cronDir?: string) {
     const config = getConfig();
     this.jobsDir = cronDir ?? config.cronDir;
     this.resultsFile = join(this.jobsDir, "results.jsonl");
+  }
+
+  private ensureDir(): void {
+    if (this._dirEnsured) return;
     mkdirSync(this.jobsDir, { recursive: true });
+    this._dirEnsured = true;
   }
 
   private jobPath(jobId: string): string {
@@ -73,6 +79,7 @@ export class CronManager {
     baseUrl?: string,
     notify?: string,
   ): string {
+    this.ensureDir();
     const jobId = crypto.randomBytes(6).toString("hex").slice(0, 12);
     const job: StoredCronJob = {
       id: jobId,
@@ -116,6 +123,7 @@ export class CronManager {
   }
 
   listJobs(): StoredCronJob[] {
+    this.ensureDir();
     const now = Date.now();
     const cached = _listJobsCache.get(this.jobsDir);
     if (cached && now - cached.ts < CACHE_TTL) return cached.jobs;

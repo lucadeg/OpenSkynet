@@ -3,7 +3,7 @@
  * Manages persistent sandbox sessions with Openbrowser integration
  */
 
-import { getOpenbrowserAdapter } from '../../agent/tools/browser-tools.js';
+import { getOpenbrowserAdapter } from '../agent/tools/browser-tools.js';
 
 // Simple UUID generator
 function generateUUID(): string {
