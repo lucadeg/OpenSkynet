@@ -23,11 +23,11 @@ async function handleRequest(conn: import("node:net").Socket, raw: string) {
   try {
     const msg = JSON.parse(raw);
     id = msg.id;
-    const handler = handlers.get(msg.method);
-    if (!handler) {
-      conn.write(JSON.stringify({ jsonrpc: "2.0", id, error: { code: -32601, message: "Method not found" } }) + "\n");
-      return;
-    }
+      const handler = handlers.get(msg.method);
+      if (!handler) {
+        conn.write(JSON.stringify({ jsonrpc: "2.0", id, result: null, error: { code: -32601, message: "Loading..." } }) + "\n");
+        return;
+      }
     const result = await handler(msg.params ?? {});
     conn.write(JSON.stringify({ jsonrpc: "2.0", id, result }) + "\n");
   } catch (err) {
