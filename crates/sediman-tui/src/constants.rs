@@ -41,7 +41,7 @@ pub const AGENT_STEPS_CAP: usize = 500;
 // Event loop
 pub const FRAME_INTERVAL_MS: u64 = 33;
 pub const MAX_EVENTS_PER_FRAME: usize = 50;
-pub const HEALTH_CHECK_INTERVAL_TICKS: u64 = 90;
+pub const HEALTH_CHECK_INTERVAL_TICKS: u64 = 10;
 
 // Completion
 pub const COMPLETION_MAX_ITEMS: usize = 10;

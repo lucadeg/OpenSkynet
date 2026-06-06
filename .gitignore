@@ -47,6 +47,22 @@ node_modules/
 # Rust
 target/
 
+# TypeScript SDK
+packages/tui-core/dist/
+packages/tui-core/node_modules/
+packages/*/node_modules/
+*.node
+
+# Native binaries (distributed via platform packages)
+*.dylib
+*.so
+*.dll
+!packages/tui-darwin-arm64/*.dylib
+!packages/tui-darwin-x64/*.dylib
+!packages/tui-linux-x64/*.so
+!packages/tui-linux-arm64/*.so
+!packages/tui-win32-x64/*.dll
+
 # Research paper (separate artifact)
 docs/paper/
 
@@ -61,3 +77,4 @@ benchmarks/skill_generalization/skills/
 *.benchmark_results.jsonl
 *.benchmark_report.html
 
+.build/

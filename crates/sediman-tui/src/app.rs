@@ -1153,7 +1153,19 @@ pub async fn run(
     let event_loop = EventLoop::new(30.0, event_tx.clone());
     let _handle = tokio::spawn(event_loop.run());
 
-    // Set up Ctrl+C handler for graceful shutdown
+    // Immediate connection check before entering main loop
+    app.connection.is_connected = app.connection.bridge.is_connected().await;
+    if app.connection.is_connected {
+        if app.modals.available_providers.is_empty() {
+            if let Ok(providers) = app.connection.bridge.list_providers().await {
+                app.modals.available_providers = providers;
+                app.add_system_message("Backend connected.".into());
+                app.mark_dirty();
+            }
+        }
+    }
+
+    // Set up Ctrl-C handler for graceful shutdown
     let shutdown_tx = event_tx.clone();
     let interrupt_flag = app.interrupt.flag().clone();
     tokio::spawn(async move {
@@ -1638,7 +1650,7 @@ mod comprehensive_app_tests {
 
     #[test]
     fn test_health_check_interval() {
-        assert_eq!(HEALTH_CHECK_INTERVAL_TICKS, 90);
+        assert_eq!(HEALTH_CHECK_INTERVAL_TICKS, 10);
     }
 }
 
