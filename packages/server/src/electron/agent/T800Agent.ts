@@ -14,11 +14,12 @@ import type { BaseMemoryStrategy } from '../../memory/strategy';
 import type { SkillEngine } from '../../skills/engine';
 import type { SkillSearchEngine } from '../../skills/search';
 import { ToolBus } from '../../agent/tools/bus';
-import { loadSoul } from '../../agent/soul';
+import { loadSoul } from '../../agent/prompts/soul';
 import logger from '../../core/logging';
 import { getConfig } from '../../core/config';
 import { initializeT800Tools } from '../tools';
 import type { AgentLoop } from '../../agent/loop';
+import { StreamEmitter, streamEventToStepEvent } from '../../agent/streaming';
 
 type Message = { role: string; content: string };
 
@@ -68,6 +69,7 @@ export class T800Agent {
   private headless: boolean;
   private toolsInitialized = false;
   private cancelled = false;
+  private streamEmitter: StreamEmitter;
 
   constructor(opts: T800AgentOpts) {
     const config = getConfig();
@@ -82,6 +84,7 @@ export class T800Agent {
     this.soul = '';
     this.workingDirectory = opts.workingDirectory ?? process.cwd();
     this.headless = opts.headless ?? true;
+    this.streamEmitter = new StreamEmitter({ batchSize: 10, flushIntervalMs: 50 });
 
     // Initialize all T-800 tools
     this.initializeTools(opts);
@@ -128,6 +131,9 @@ export class T800Agent {
     try {
       this.soul = loadSoul();
 
+      // Emit task start event
+      this.streamEmitter.emitProgress(0, this.maxIterations, 'starting');
+
       if (this.memory) {
         await this.memory.onTurnStart();
       }
@@ -139,6 +145,9 @@ export class T800Agent {
       while (iteration < this.maxIterations && !done && !this.cancelled) {
         iteration++;
 
+        // Emit progress event
+        this.streamEmitter.emitProgress(iteration, this.maxIterations, 'executing');
+
         const systemPrompt = this.buildSystemPrompt(task, iteration);
         const messages = this.conversation.slice(-50); // Keep last 50 messages
         const tools = this.toolBus.getDefinitions();
@@ -149,11 +158,16 @@ export class T800Agent {
         } catch (err) {
           const errorMsg = err instanceof Error ? err.message : String(err);
           logger.error({ err: errorMsg, iteration }, 't800_agent_llm_failed');
-          steps.push({
+
+          // Emit error event
+          this.streamEmitter.emitError(errorMsg, true);
+
+          const step: StepEvent = {
             phase: 'executing',
             action: 'llm_error',
             detail: errorMsg
-          });
+          };
+          steps.push(step);
           finalResult = `LLM error: ${errorMsg}`;
           break;
         }
@@ -162,23 +176,38 @@ export class T800Agent {
           for (const tc of response.tool_calls) {
             if (this.cancelled) break;
 
+            const action = tc.name;
+            const detail = JSON.stringify(tc.arguments);
+
+            // Emit step start event
+            this.streamEmitter.emitStepStart('executing', action, detail);
+
             const step: StepEvent = {
               phase: 'executing',
-              action: tc.name,
-              detail: JSON.stringify(tc.arguments),
+              action,
+              detail,
             };
             steps.push(step);
-            actionsTaken.push(tc.name);
+            actionsTaken.push(action);
 
             try {
               const result = await this.toolBus.execute(tc.name, tc.arguments);
-              step.observation = result.success ? result.output : result.error;
+              const observation = result.success ? result.output : result.error;
+              step.observation = observation;
+
+              // Emit step complete event
+              this.streamEmitter.emitStepComplete('executing', action, observation, result.success);
+
               this.addToolResult(tc.id, tc.name,
                 result.success ? result.output : result.error ?? 'Tool failed'
               );
             } catch (err) {
               const errMsg = err instanceof Error ? err.message : String(err);
               step.observation = errMsg;
+
+              // Emit step error event
+              this.streamEmitter.emitStepComplete('executing', action, errMsg, false);
+
               this.addToolResult(tc.id, tc.name, `Error: ${errMsg}`);
             }
           }
@@ -192,6 +221,9 @@ export class T800Agent {
           done = true;
 
           this.addAssistantMessage(text);
+
+          // Emit content event
+          this.streamEmitter.emitContent(text, true);
 
           steps.push({
             phase: 'done',
@@ -208,7 +240,9 @@ export class T800Agent {
           );
 
           if (failedSteps.length >= 2) {
-            this.addSystemMessage('Multiple errors detected. Consider trying alternative approach.');
+            const reflectionMsg = 'Multiple errors detected. Consider trying alternative approach.';
+            this.streamEmitter.emitThinking(reflectionMsg, 'reflection');
+            this.addSystemMessage(reflectionMsg);
           }
         }
       }
@@ -231,9 +265,16 @@ export class T800Agent {
       } else {
         const errorMsg = err instanceof Error ? err.message : String(err);
         logger.error({ err: errorMsg }, 't800_agent_loop_error');
+
+        // Emit error event
+        this.streamEmitter.emitError(errorMsg, false);
+
         finalResult = `Error: ${errorMsg}`;
         success = false;
       }
+    } finally {
+      // Clean up stream emitter
+      this.streamEmitter.destroy();
     }
 
     const elapsedSecs = (Date.now() - startTime) / 1000;
@@ -252,6 +293,13 @@ export class T800Agent {
 
   cancel(): void {
     this.cancelled = true;
+  }
+
+  /**
+   * Subscribe to streaming events during execution
+   */
+  onStreamEvent(listener: (event: import('../../agent/streaming').AgentStreamEvent) => void): () => void {
+    return this.streamEmitter.onEvent(listener);
   }
 
   getConversation(): Message[] {
@@ -329,7 +377,7 @@ export class T800Agent {
         await this.memory.onSessionEnd();
       }
     } catch (err) {
-      logger.warn({ err: (err as Error).message }, 'kimi_agent_post_task_error');
+      logger.warn({ err: (err as Error).message }, 't800_agent_post_task_error');
     }
   }
 

@@ -91,6 +91,11 @@ register("model.switch", async (params) => {
   }
 });
 
+// Setup logging BEFORE spawning TUI to avoid console output interference
+// Use file-only logging (consoleEnabled=false) in TUI mode to prevent terminal control issues
+const { setupLogging } = await import("./core/logging.js");
+setupLogging("info", false); // false = no console output in TUI mode
+
 const binRelease = resolve(process.cwd(), "target/release/sediman-tui");
 const binDebug = resolve(process.cwd(), "target/debug/sediman-tui");
 const tuiBin = existsSync(binRelease) ? binRelease : binDebug;
@@ -132,7 +137,6 @@ process.on("exit", () => {
 });
 
 const [
-  { setupLogging },
   { getConfig },
   { FileMemoryStrategy },
   { SkillEngine },
@@ -146,7 +150,6 @@ const [
   { createProvider },
   { AgentLoop },
 ] = await Promise.all([
-  import("./core/logging.js"),
   import("./core/config.js"),
   import("./memory/strategies/file-memory.js"),
   import("./skills/engine.js"),
@@ -154,14 +157,13 @@ const [
   import("./skills/search.js"),
   import("./scheduler/cron.js"),
   import("./memory/utils/changelog.js"),
-  import("./agent/checkpoint.js"),
+  import("./agent/memory/checkpoint.js"),
   import("./browser/session.js"),
   import("./browser/controller.js"),
   import("./llm/provider.js"),
   import("./agent/loop.js"),
 ]);
 
-setupLogging();
 const config = getConfig();
 const headless = (process.env.SEDIMAN_HEADLESS ?? "true") === "true";
 const memory = new FileMemoryStrategy();

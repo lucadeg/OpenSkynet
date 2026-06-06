@@ -1,6 +1,6 @@
 /** Tests for Skills Hub */
 import { test, describe, expect } from "bun:test";
-import { HubClient, SkillLockFile } from "../../../src/skills/hub.js";
+import { HubClient, SkillLockFile } from "../../src/skills/hub.js";
 
 describe("SkillsHub", () => {
   describe("HubClient", () => {

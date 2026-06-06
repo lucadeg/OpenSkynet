@@ -5,8 +5,8 @@
 
 import type { StepEvent } from "../../core/types";
 import { ToolBus } from "../../agent/tools/bus";
-import { AuditLog } from "../../agent/guardrails";
-import { InterruptSignal } from "../interrupt";
+import { AuditLog } from "../../monitoring/guardrails";
+import { InterruptSignal } from "../core/interrupt";
 
 export interface ToolExecutionResult {
   steps: StepEvent[];

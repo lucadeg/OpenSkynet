@@ -36,10 +36,9 @@ export const COMMANDS: Array<{ name: string; aliases?: string[]; description: st
   { name: "/clear", aliases: ["/cls"], description: "Clear messages", category: "General" },
   { name: "/reset", description: "Full reset", category: "General" },
   { name: "/status", description: "Show status", category: "General" },
+  { name: "/mode", aliases: ["/m"], description: "Switch agent mode (T-800/Terminator)", category: "Agent" },
   { name: "/models", aliases: ["/model"], description: "Switch model", category: "Agent" },
   { name: "/provider", aliases: ["/providers"], description: "Switch provider", category: "Agent" },
-  { name: "/coder", description: "Switch coder backend", category: "Agent" },
-  { name: "/search", description: "Search mode", category: "Agent" },
   { name: "/soul", description: "Edit personality", category: "Agent" },
   { name: "/skills", aliases: ["/skill"], description: "Browse skills", category: "Skills" },
   { name: "/memory", aliases: ["/mem"], description: "Manage memory", category: "Memory" },
@@ -53,11 +52,6 @@ export const COMMANDS: Array<{ name: string; aliases?: string[]; description: st
   { name: "/checkpoint-create", description: "Create checkpoint", category: "Checkpoint" },
   { name: "/checkpoint-revert", aliases: ["/rewind"], description: "Revert to checkpoint", category: "Checkpoint" },
   { name: "/branch", description: "Named checkpoint", category: "Checkpoint" },
-  { name: "/delegate", description: "Run sub-agent task", category: "Tasks" },
-  { name: "/parallel", description: "Run parallel tasks", category: "Tasks" },
-  { name: "/doctor", description: "Run diagnostics", category: "Utilities" },
-  { name: "/update", aliases: ["/upgrade"], description: "Check for updates", category: "Utilities" },
-  { name: "/compress", description: "Compress old messages", category: "Utilities" },
   { name: "/themes", aliases: ["/theme"], description: "Switch theme", category: "Appearance" },
 ];
 
@@ -99,13 +93,10 @@ export type ModalType =
   | "skillBrowser"
   | "memoryMenu"
   | "memoryEditor"
-  | "memorySystemPicker"
   | "scheduleBrowser"
   | "sessionBrowser"
   | "themePicker"
-  | "coderPicker"
-  | "searchModePicker"
-  | "browserModePicker"
+  | "modePicker"
   | "doctor"
   | "info"
   | "soulEditor"
@@ -126,6 +117,14 @@ export interface ChatMessage {
   selectedTab?: "thinking" | "steps" | "response";
   tabExpanded?: boolean;
   state?: "streaming" | "completed";
+  thinkingExpanded?: boolean;
+  stepsExpanded?: boolean;
+  retryAttempt?: number | null;
+  retryMax?: number | null;
+  retryCountdown?: number | null;
+  validationConfidence?: number | null;
+  validationIssues?: number | null;
+  reflectionStatus?: boolean;
 }
 
 export interface ScrollState {
@@ -162,14 +161,12 @@ export class App {
   agent = {
     running: false,
     startTime: 0,
-    mode: "Manager" as AgentMode,
+    mode: "T-800" as AgentMode,
     modes: [...DEFAULT_MODES],
     currentModeIndex: 0,
     spinnerFrame: 0,
     streamingPhase: "",
     taskCount: 0,
-    coderBackend: "internal",
-    searchMode: "auto",
     retryAttempt: null as number | null,
     retryMax: null as number | null,
     retryCountdown: null as number | null,

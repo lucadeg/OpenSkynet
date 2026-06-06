@@ -4,7 +4,7 @@
  */
 
 import type { Message } from "../../core/types";
-import { ContextCompressor } from "../../agent/compressor";
+import { ContextCompressor } from "../../agent/memory/compressor";
 
 export class CompressionHandler {
   private compressor: ContextCompressor;

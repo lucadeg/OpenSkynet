@@ -12,9 +12,9 @@ import { GitHubInstaller } from "./skills/hub";
 import { SkillSearchEngine } from "./skills/search";
 import { CronManager } from "./scheduler/cron";
 import { AgentLoop } from "./agent/loop";
-import { CheckpointManager } from "./agent/checkpoint";
+import { CheckpointManager } from "./agent/memory/checkpoint";
 import { Changelog } from "./memory/utils/changelog";
-import { RecordingManager } from "./agent/recording/manager";
+// import { RecordingManager } from "./agent/recording/manager"; // TODO: RecordingManager not found
 import { BrowserSession } from "./browser/session";
 import { BrowserController } from "./browser/controller";
 import { createAgentToolRegistry } from "./agent/tools";
@@ -63,7 +63,8 @@ async function main() {
   const cronManager = new CronManager();
   const changelog = new Changelog();
   const checkpointManager = new CheckpointManager();
-  const recordingManager = new RecordingManager();
+  // const recordingManager = new RecordingManager(); // TODO: RecordingManager not found
+  const recordingManager = null as any; // Temporarily null until RecordingManager is restored
 
   const headless = (process.env.SEDIMAN_HEADLESS ?? "true") === "true";
   const browserSession = new BrowserSession({

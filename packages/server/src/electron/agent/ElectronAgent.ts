@@ -1,6 +1,12 @@
 /**
  * Electron Agent - Browser-focused automation agent
  *
+ * @deprecated Use T800Agent with browser tools enabled instead.
+ *
+ * This browser-focused agent has been superseded by T800Agent which provides
+ * the same browser automation capabilities along with all other tools (file, web,
+ * skills, document, coding) in a unified interface.
+ *
  * Based on kimi-code's architecture with:
  * - Tool-based execution system
  * - Proper tool registration
@@ -13,7 +19,7 @@ import type { LLMProvider } from '../../llm/provider';
 import type { BaseMemoryStrategy } from '../../memory/strategy';
 import type { SkillEngine } from '../../skills/engine';
 import { ToolBus } from '../../agent/tools/bus';
-import { loadSoul } from '../../agent/soul';
+import { loadSoul } from '../../agent/prompts/soul';
 import logger from '../../core/logging';
 import { getConfig } from '../../core/config';
 import { initializeElectronTools } from '../tools';

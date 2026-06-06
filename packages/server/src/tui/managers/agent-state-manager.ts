@@ -8,13 +8,11 @@ import type { AgentMode } from "../app.js";
 export interface AgentState {
   running: boolean;
   startTime: number;
-  mode: AgentMode | "Manager";
+  mode: AgentMode;
   currentModeIndex: number;
   spinnerFrame: number;
   streamingPhase: string;
   taskCount: number;
-  coderBackend: string;
-  searchMode: string;
   retryAttempt: number | null;
   retryMax: number | null;
   retryCountdown: number | null;
@@ -27,13 +25,11 @@ export class AgentStateManager {
   private state: AgentState = {
     running: false,
     startTime: 0,
-    mode: "Manager",
+    mode: "T-800",
     currentModeIndex: 0,
     spinnerFrame: 0,
     streamingPhase: "",
     taskCount: 0,
-    coderBackend: "internal",
-    searchMode: "auto",
     retryAttempt: null,
     retryMax: null,
     retryCountdown: null,
@@ -191,13 +187,11 @@ export class AgentStateManager {
     this.state = {
       running: false,
       startTime: 0,
-      mode: "Manager",
+      mode: "T-800",
       currentModeIndex: 0,
       spinnerFrame: 0,
       streamingPhase: "",
       taskCount: 0,
-      coderBackend: "internal",
-      searchMode: "auto",
       retryAttempt: null,
       retryMax: null,
       retryCountdown: null,

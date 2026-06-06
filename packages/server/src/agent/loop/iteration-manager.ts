@@ -3,9 +3,9 @@
  * Extracted from agent/loop.ts for better modularity
  */
 
-import type { Budget } from "../guardrails";
-import { checkBudget } from "../guardrails";
-import { InterruptSignal } from "../interrupt";
+import type { Budget } from "../monitoring/guardrails";
+import { checkBudget } from "../monitoring/guardrails";
+import { InterruptSignal } from "../core/interrupt";
 
 export interface IterationState {
   iteration: number;
