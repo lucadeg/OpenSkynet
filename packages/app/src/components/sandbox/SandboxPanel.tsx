@@ -32,7 +32,6 @@ export function SandboxPanel() {
     { id: '1', title: 'Browser', url: 'https://www.google.com', isActive: true }
   ]);
   const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
-  const [showFilePicker, setShowFilePicker] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const apiBaseUrl = 'http://localhost:3001';
 

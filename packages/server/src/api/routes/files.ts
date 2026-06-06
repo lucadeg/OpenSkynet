@@ -220,7 +220,7 @@ export function createFileRoutes(deps: ApiDeps): Hono {
       const workspace = join(WORKSPACE_BASE, sessionId);
 
       if (existsSync(workspace)) {
-        await writeFile(workspace, ".cleanup", new Date().toISOString());
+        await writeFile(join(workspace, ".cleanup"), new Date().toISOString());
       }
 
       return c.json({

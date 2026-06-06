@@ -3,13 +3,13 @@
  * Provides file system tools to the agent for working with user files
  */
 
-import type { ToolDefinition, ToolResult } from "./interfaces.js";
+import type { ToolResult } from "../interfaces.js";
+import type { ToolDefinition } from "../../../core/types.js";
 
 const FILE_TOOLS: ToolDefinition[] = [
   {
     name: "file_read",
     description: "Read the content of a file from the workspace",
-    type: "function",
     parameters: {
       type: "object",
       properties: {
@@ -28,7 +28,6 @@ const FILE_TOOLS: ToolDefinition[] = [
   {
     name: "file_list",
     description: "List all files in the workspace directory",
-    type: "function",
     parameters: {
       type: "object",
       properties: {
@@ -42,7 +41,6 @@ const FILE_TOOLS: ToolDefinition[] = [
   {
     name: "file_write",
     description: "Write content to a file in the workspace",
-    type: "function",
     parameters: {
       type: "object",
       properties: {
@@ -65,7 +63,6 @@ const FILE_TOOLS: ToolDefinition[] = [
   {
     name: "file_delete",
     description: "Delete a file from the workspace",
-    type: "function",
     parameters: {
       type: "object",
       properties: {
@@ -122,7 +119,7 @@ export class FileToolsProvider {
         }
 
         const response = await fetch(url, options);
-        const data = await response.json();
+        const data = (await response.json()) as Record<string, any>;
 
         if (data.success) {
           let output = "";
