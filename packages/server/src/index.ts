@@ -90,6 +90,7 @@ async function main() {
   const browserController = new BrowserController({
     headless,
     userDataDir: config.browserProfileDir,
+    session: browserSession,
   });
 
   const toolRegistry = createAgentToolRegistry({
@@ -222,6 +223,7 @@ async function startRpcFast(logger: ReturnType<typeof createLogger>) {
   const browserController = new BrowserController({
     headless,
     userDataDir: config.browserProfileDir,
+    session: browserSession,
   });
   const agentLoop = new AgentLoop({
     llmProvider,

@@ -1,7 +1,6 @@
 import { Hono } from "hono";
 import type { BrowserSession } from "../../browser/session";
 import { getBrowserController, hasPendingIntervention, getPendingIntervention, resolveIntervention } from "../../agent/tools/browser-tools";
-
 // Store the latest screenshot globally (in production, this would be in a proper state manager)
 let latestScreenshot: { data: string; url: string; timestamp: number } | null = null;
 
@@ -43,6 +42,12 @@ export function createBrowserRoutes(browserSession?: BrowserSession): Hono {
       console.log("[CDP] Connecting to:", body.webSocketDebuggerUrl.substring(0, 80) + "...");
       await browserSession.connectViaCDP(body.webSocketDebuggerUrl);
       console.log("[CDP] Connected! Shared browser is now active.");
+
+      const ctrl = getBrowserController();
+      if (ctrl) {
+        ctrl.setSession(browserSession);
+        console.log("[CDP] BrowserController now uses shared CDP session.");
+      }
 
       return c.json({ success: true, message: "Connected to shared browser" });
     } catch (err) {

@@ -122,6 +122,10 @@ export class BrowserController {
     return this.session;
   }
 
+  setSession(session: BrowserSession): void {
+    this.session = session;
+  }
+
   // Browser actions
   async navigate(url: string): Promise<string> {
     try {
@@ -138,10 +142,10 @@ export class BrowserController {
           });
           result = `Navigated to ${url}`;
           this.emit("navigate", url);
-          console.log('[BrowserController] ✅ Navigation succeeded on attempt', attempt);
+          console.log('[BrowserController] Navigation succeeded on attempt', attempt);
           break;
         } catch (gotoError: any) {
-          console.log('[BrowserController] ❌ Attempt', attempt, 'failed:', gotoError.message);
+          console.log('[BrowserController] Attempt', attempt, 'failed:', gotoError.message);
           if (attempt === 3) {
             // Last attempt failed, try with just load state
             try {
@@ -151,7 +155,7 @@ export class BrowserController {
               });
               result = `Navigated to ${url} (committed)`;
               this.emit("navigate", url);
-              console.log('[BrowserController] ✅ Navigation succeeded with commit');
+              console.log('[BrowserController] Navigation succeeded with commit');
               break;
             } catch (commitError: any) {
               result = `Failed to navigate to ${url}: ${commitError.message}`;

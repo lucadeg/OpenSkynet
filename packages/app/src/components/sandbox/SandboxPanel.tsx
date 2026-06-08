@@ -15,8 +15,7 @@ export function SandboxPanel() {
   const [browserUrl, setBrowserUrl] = useState('');
   const [inputUrl, setInputUrl] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [intervention, setIntervention] = useState<{ active: boolean; message: string; id: number } | null>(null);
-  const [interventionLoading, setInterventionLoading] = useState(false);
+  const [cdpConnected, setCdpConnected] = useState(false);
 
   const isOpen = useSandboxStore(state => state.isOpen);
   const isActive = useSandboxStore(state => state.isActive);
@@ -24,6 +23,7 @@ export function SandboxPanel() {
 
   const webviewRef = useRef<any>(null);
 
+  // When webview mounts, set up event listeners
   const webviewCallbackRef = useCallback((node: any) => {
     if (!node) return;
     webviewRef.current = node;
@@ -42,16 +42,65 @@ export function SandboxPanel() {
     node.addEventListener('did-start-loading', () => setIsLoading(true));
     node.addEventListener('did-stop-loading', () => setIsLoading(false));
     node.addEventListener('did-fail-load', (e: any) => {
-      // ERR_ABORTED (-3) is normal — happens when navigation is interrupted by a new navigation.
-      // This is not an error, just the browser cancelling the previous load. Suppress it.
       if (e.errorCode === -3) {
         setIsLoading(false);
         return;
       }
-      console.warn('[SandboxPanel] Load failed:', e.errorCode, e.errorDescription, e.validatedURL);
       setIsLoading(false);
     });
   }, []);
+
+  // When agent becomes active, discover webview CDP target and connect Playwright to it
+  // This makes agent and user share the SAME browser
+  useEffect(() => {
+    if (!isActive || !isOpen || cdpConnected) return;
+
+    const connectSharedBrowser = async () => {
+      try {
+        // 1. Navigate webview to a real page so CDP target is discoverable
+        if (webviewRef.current) {
+          const currentUrl = webviewRef.current.getURL();
+          if (!currentUrl || currentUrl === 'about:blank' || currentUrl.startsWith('file://')) {
+            webviewRef.current.loadURL('about:blank');
+            await new Promise(r => setTimeout(r, 500));
+          }
+        }
+
+        // 2. Get CDP target from Electron main process
+        const electronAPI = (window as any).electronAPI;
+        if (!electronAPI?.browser?.getCdpTarget) return;
+
+        const cdpResult = await electronAPI.browser.getCdpTarget();
+        if (!cdpResult?.success || !cdpResult.webSocketDebuggerUrl) {
+          console.warn('[SandboxPanel] CDP target not available:', cdpResult?.error);
+          return;
+        }
+
+        console.log('[SandboxPanel] CDP endpoint:', cdpResult.webSocketDebuggerUrl.substring(0, 60) + '...');
+
+        // 3. Tell server to connect Playwright to this webview
+        const resp = await fetch(`${API_BASE}/api/browser/connect-cdp`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ webSocketDebuggerUrl: cdpResult.webSocketDebuggerUrl }),
+        });
+
+        const data = await resp.json();
+        if (data.success) {
+          console.log('[SandboxPanel] Shared browser connected! Agent and user share the same browser.');
+          setCdpConnected(true);
+        } else {
+          console.warn('[SandboxPanel] CDP connect failed:', data.error);
+        }
+      } catch (err) {
+        console.warn('[SandboxPanel] Shared browser setup failed:', err);
+      }
+    };
+
+    // Small delay to let webview mount
+    const timer = setTimeout(connectSharedBrowser, 1000);
+    return () => clearTimeout(timer);
+  }, [isActive, isOpen, cdpConnected]);
 
   const navigateTo = useCallback((url: string) => {
     let target = url.trim();
@@ -91,60 +140,6 @@ export function SandboxPanel() {
   }, []);
 
   const handleClose = useCallback(() => togglePanel(), [togglePanel]);
-
-  // Sync agent navigation to webview — polls the agent's browser URL
-  useEffect(() => {
-    if (!isActive || !isOpen) return;
-    let active = true;
-    const poll = async () => {
-      if (!active) return;
-      try {
-        const resp = await fetch(`${API_BASE}/api/browser/screencast-frame`);
-        if (resp.ok) {
-          const data = await resp.json();
-          if (data.url && data.url !== 'about:blank' && data.url !== browserUrl) {
-            if (webviewRef.current) {
-              const currentUrl = webviewRef.current.getURL();
-              if (currentUrl !== data.url) {
-                webviewRef.current.loadURL(data.url);
-              }
-            }
-          }
-        }
-      } catch {}
-    };
-    poll();
-    const interval = setInterval(poll, 1000);
-    return () => { active = false; clearInterval(interval); };
-  }, [isActive, isOpen, browserUrl]);
-
-  // Human intervention polling
-  useEffect(() => {
-    if (!isActive) return;
-    const check = async () => {
-      try {
-        const res = await fetch(`${API_BASE}/api/browser/intervention`);
-        const data = await res.json();
-        setIntervention(data.active ? data : null);
-      } catch {}
-    };
-    check();
-    const interval = setInterval(check, 2000);
-    return () => clearInterval(interval);
-  }, [isActive]);
-
-  const handleInterventionDone = useCallback(async () => {
-    setInterventionLoading(true);
-    try {
-      await fetch(`${API_BASE}/api/browser/intervention-done`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: 'User completed the task' }),
-      });
-      setIntervention(null);
-    } catch {}
-    setInterventionLoading(false);
-  }, []);
 
   const resizeHandlers = useMemo(() => ({
     down: (e: React.MouseEvent) => { if (isFullscreen) return; setIsResizing(true); e.preventDefault(); },
@@ -193,14 +188,14 @@ export function SandboxPanel() {
             <div className="flex items-center gap-2">
               {isLoading ? (
                 <Loader2 className="w-4 h-4 animate-spin text-yellow-500" />
-              ) : browserUrl && browserUrl !== 'about:blank' ? (
+              ) : cdpConnected ? (
                 <Wifi className="w-4 h-4 text-green-500" />
               ) : (
                 <Globe className="w-4 h-4 text-muted-foreground" />
               )}
               <span className="text-sm font-medium">Browser</span>
-              {browserUrl && browserUrl !== 'about:blank' && !isLoading && (
-                <span className="text-xs px-2 py-0.5 rounded-full bg-green-500/10 text-green-600">Live</span>
+              {cdpConnected && (
+                <span className="text-xs px-2 py-0.5 rounded-full bg-green-500/10 text-green-600">Shared</span>
               )}
             </div>
             <div className="flex items-center gap-1">
@@ -239,24 +234,7 @@ export function SandboxPanel() {
           </div>
         </div>
 
-        {/* Human Intervention Banner */}
-        {intervention?.active && (
-          <div className="mx-3 mb-2 p-3 rounded-lg bg-amber-50 border border-amber-300 dark:bg-amber-950 dark:border-amber-700 flex items-center justify-between gap-3">
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2 mb-1">
-                <span className="text-amber-600 text-sm">&#x1F6A8;</span>
-                <span className="text-sm font-semibold text-amber-800 dark:text-amber-300">Agent Needs Your Help</span>
-              </div>
-              <p className="text-xs text-amber-700 dark:text-amber-400">{intervention.message}</p>
-            </div>
-            <button onClick={handleInterventionDone} disabled={interventionLoading}
-              className="px-4 py-1.5 bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white rounded text-sm font-medium shrink-0 transition-colors">
-              {interventionLoading ? '...' : 'Done'}
-            </button>
-          </div>
-        )}
-
-        {/* Real Chromium Browser — Electron <webview> */}
+        {/* Real Chromium Browser — Electron <webview> shared with agent via CDP */}
         <div className="flex-1 relative overflow-hidden bg-white">
           <webview
             ref={webviewCallbackRef}
@@ -282,8 +260,8 @@ export function SandboxPanel() {
           <div className="flex items-center gap-2">
             {isLoading ? (
               <><Loader2 className="w-3 h-3 animate-spin text-yellow-500" /><span className="text-yellow-600">Loading...</span></>
-            ) : browserUrl && browserUrl !== 'about:blank' ? (
-              <><Wifi className="w-3 h-3 text-green-500" /><span className="text-green-600">Connected</span></>
+            ) : cdpConnected ? (
+              <><Wifi className="w-3 h-3 text-green-500" /><span className="text-green-600">Shared</span></>
             ) : (
               <span className="text-muted-foreground">Ready</span>
             )}
