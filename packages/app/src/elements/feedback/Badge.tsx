@@ -84,9 +84,6 @@ Badge.displayName = 'Badge';
 
 export { Badge };
 
-/**
- * Status Badge - specialized badge for status indicators
- */
 export interface StatusBadgeProps {
   status: 'online' | 'offline' | 'away' | 'busy' | 'error';
   label?: string;
@@ -145,100 +142,6 @@ export function StatusBadge({
         />
       )}
       <span>{label || config.defaultLabel}</span>
-    </div>
-  );
-}
-
-/**
- * Count Badge - for notification counts
- */
-export interface CountBadgeProps {
-  count: number;
-  max?: number;
-  variant?: 'default' | 'primary' | 'success' | 'warning' | 'error';
-  showZero?: boolean;
-  className?: string;
-}
-
-export function CountBadge({
-  count,
-  max = 99,
-  variant = 'error',
-  showZero = false,
-  className,
-}: CountBadgeProps) {
-  const displayCount = count > max ? `${max}+` : count;
-
-  if (!showZero && count === 0) {
-    return null;
-  }
-
-  const variantColors = {
-    default: 'hsl(var(--muted))',
-    primary: 'hsl(var(--primary))',
-    success: 'hsl(var(--success))',
-    warning: 'hsl(var(--warning))',
-    error: 'hsl(var(--error))',
-  };
-
-  return (
-    <span
-      className={cn(
-        // Base styles
-        'inline-flex items-center justify-center',
-        'min-w-[1.25rem] h-5 px-1.5',
-        'text-xs font-semibold',
-        'rounded-full',
-        'transition-all duration-200',
-        className
-      )}
-      style={{
-        background: variantColors[variant],
-        color: 'hsl(var(--background))',
-      }}
-    >
-      {displayCount}
-    </span>
-  );
-}
-
-/**
- * Pill Badge - rectangular badge for categories/tags
- */
-export interface PillBadgeProps extends React.HTMLAttributes<HTMLDivElement> {
-  variant?: 'default' | 'primary' | 'success' | 'warning' | 'error';
-  size?: 'sm' | 'md' | 'lg';
-}
-
-export function PillBadge({
-  className,
-  variant = 'default',
-  size = 'md',
-  children,
-  ...props
-}: PillBadgeProps) {
-  const sizeClasses = {
-    sm: 'text-xs px-2 py-0.5',
-    md: 'text-sm px-2.5 py-1',
-    lg: 'text-base px-3 py-1.5',
-  };
-
-  return (
-    <div
-      className={cn(
-        // Base styles
-        'inline-flex items-center rounded-md font-medium transition-colors duration-150',
-        // Size
-        sizeClasses[size],
-        className
-      )}
-      style={{
-        background: `hsl(var(--badge-${variant === 'default' ? 'primary' : variant}))`,
-        color: `hsl(var(--badge-${variant === 'default' ? 'foreground' : variant + '-foreground'}))`,
-      }}
-      {...props}
-    >
-      {children}
     </div>
   );
 }

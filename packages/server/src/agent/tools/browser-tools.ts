@@ -1,9 +1,21 @@
 import { ToolBus } from './bus.js';
 import type { ToolExecutor } from './interfaces.js';
-import { BrowserController } from '../../browser/controller.js';
+import { BrowserController, type PageSnapshot } from '../../browser/controller.js';
 import type { ToolDefinition } from '../../core/types.js';
 import type { ProjectManager } from '../../project/manager.js';
-import { setLatestScreenshot } from '../../api/routes/browser.js';
+import { setLatestScreenshot, waitForCdpConnection, isCdpConnected } from '../../api/routes/browser.js';
+import { createLogger } from '../../core/logging.js';
+import { ALL_BROWSER_TOOLS } from './browser-tool-definitions.js';
+import {
+  setBrowserController,
+  storeScreenshot,
+  updateLatestSnapshot
+} from './screenshot-handler.js';
+import {
+  setProjectManager as setInterventionProjectManager
+} from './intervention-handler.js';
+
+const logger = createLogger("browser-tools");
 
 let browserController: BrowserController | null = null;
 let projectManager: ProjectManager | null = null;
@@ -12,35 +24,60 @@ let onInterventionRequested: ((message: string, id: number) => void) | null = nu
 let pendingInterventionId = 0;
 let interventionPromise: { resolve: (v: string) => void; message: string; id: number } | null = null;
 
-export function setOnInterventionRequested(cb: (message: string, id: number) => void): void {
+// Detect if running in Electron mode (shared browser expected)
+// Set SEDIMAN_MODE=electron environment variable when running in Electron app
+const RUNNING_IN_ELECTRON = process.env.SEDIMAN_MODE === 'electron';
+
+export function setProjectManager(pm: ProjectManager): void {
+  projectManager = pm;
+  setInterventionProjectManager(pm);
+  // Also set browser controller in screenshot handler if available
+  if (browserController) {
+    setBrowserController(browserController);
+  }
+}
+
+// Local intervention callback setter for Promise-based waiting
+export function setInterventionCallback(cb: (message: string, id: number) => void): void {
   onInterventionRequested = cb;
 }
 
-export function hasPendingIntervention(): boolean {
-  return interventionPromise !== null;
-}
-
-export function getPendingIntervention(): { message: string; id: number } | null {
-  if (!interventionPromise) return null;
-  return { message: interventionPromise.message, id: interventionPromise.id };
-}
-
-export function resolveIntervention(result: string): boolean {
+// Local resolve function for Promise-based waiting
+export function resolveInterventionLocal(result: string): boolean {
   if (!interventionPromise) return false;
   interventionPromise.resolve(result);
   interventionPromise = null;
   return true;
 }
 
-export function setProjectManager(pm: ProjectManager): void {
-  projectManager = pm;
-}
-
 async function ensurePage(ctrl: BrowserController): Promise<boolean> {
   const session = ctrl.getSession();
-  if (!session || !session.isStarted) {
-    await ctrl.start();
+
+  // If session already started, we're good
+  if (session?.isStarted) {
+    const ctx = session.context;
+    if (!ctx) return false;
+    if (ctx.pages().length === 0) {
+      await ctx.newPage();
+    }
+    return true;
   }
+
+  // In Electron mode, DO NOT start Playwright browser
+  // The shared <webview> is controlled via IPC
+  if (RUNNING_IN_ELECTRON) {
+    logger.info("ensurePage: Running in Electron mode - using shared <webview> (NOT Playwright)");
+
+    // Don't start Playwright - the webview is already there
+    // Just mark as ready
+    logger.info("ensurePage: Shared webview available - NOT starting separate browser");
+    return true;
+  }
+
+  // Not in Electron mode - start headless browser normally
+  logger.info("ensurePage: Starting headless browser");
+  await ctrl.start();
+
   const ctx = ctrl.getSession()?.context;
   if (!ctx) return false;
   if (ctx.pages().length === 0) {
@@ -49,188 +86,11 @@ async function ensurePage(ctrl: BrowserController): Promise<boolean> {
   return true;
 }
 
-function storeScreenshot(url?: string): void {
-  const ctrl = browserController;
-  if (!ctrl) return;
-  (async () => {
-    try {
-      await new Promise(r => setTimeout(r, 300));
-      const shot = await ctrl.screenshot();
-      if (shot && shot.length > 100) {
-        const currentUrl = url || ctrl.getSession()?.context?.pages()[0]?.url() || '';
-        setLatestScreenshot(shot, currentUrl);
-      }
-    } catch {}
-  })();
-}
-
-export const ALL_BROWSER_TOOLS: ToolDefinition[] = [
-  {
-    name: 'browser_navigate',
-    description: 'Navigate to a URL. Use this to go to a specific website or web page.',
-    parameters: {
-      type: 'object',
-      properties: {
-        url: { type: 'string', description: 'The URL to navigate to' },
-      },
-      required: ['url'],
-    },
-  },
-  {
-    name: 'browser_snapshot',
-    description: 'Capture a snapshot of the current page showing all visible interactive elements with their refId numbers. Use this to understand the page structure and find elements to interact with. Always call this after navigation or before clicking/typing.',
-    parameters: { type: 'object', properties: {}, required: [] },
-  },
-  {
-    name: 'browser_click',
-    description: 'Click an element on the page by its refId (from browser_snapshot). Use this for buttons, links, and other clickable elements.',
-    parameters: {
-      type: 'object',
-      properties: {
-        refId: { type: 'number', description: 'The refId of the element to click (from browser_snapshot)' },
-      },
-      required: ['refId'],
-    },
-  },
-  {
-    name: 'browser_type',
-    description: 'Type text into an input field by its refId. Optionally press Enter after typing to submit the form.',
-    parameters: {
-      type: 'object',
-      properties: {
-        refId: { type: 'number', description: 'The refId of the input element' },
-        text: { type: 'string', description: 'The text to type' },
-        submit: { type: 'boolean', description: 'Press Enter after typing to submit the form' },
-      },
-      required: ['refId', 'text'],
-    },
-  },
-  {
-    name: 'browser_scroll',
-    description: 'Scroll the page up or down to reveal more content. Use this when you need to see elements below the fold.',
-    parameters: {
-      type: 'object',
-      properties: {
-        direction: { type: 'string', enum: ['up', 'down'], description: 'Direction to scroll' },
-        amount: { type: 'number', description: 'Amount in pixels to scroll (default 500)' },
-      },
-      required: ['direction'],
-    },
-  },
-  {
-    name: 'browser_press_key',
-    description: 'Press a keyboard key (Enter, Tab, Escape, Backspace, ArrowDown, etc). Use for form submission, closing modals, keyboard navigation, autocomplete selection.',
-    parameters: {
-      type: 'object',
-      properties: {
-        key: { type: 'string', description: 'Key to press (e.g. "Enter", "Tab", "Escape", "ArrowDown", "Backspace")' },
-      },
-      required: ['key'],
-    },
-  },
-  {
-    name: 'browser_hover',
-    description: 'Hover over an element by refId. Use this to trigger hover menus, tooltips, and dropdown menus.',
-    parameters: {
-      type: 'object',
-      properties: {
-        refId: { type: 'number', description: 'The refId of the element to hover over' },
-      },
-      required: ['refId'],
-    },
-  },
-  {
-    name: 'browser_select_option',
-    description: 'Select an option from a dropdown <select> element by its refId and the option value.',
-    parameters: {
-      type: 'object',
-      properties: {
-        refId: { type: 'number', description: 'The refId of the select element' },
-        value: { type: 'string', description: 'The value of the option to select' },
-      },
-      required: ['refId', 'value'],
-    },
-  },
-  {
-    name: 'browser_go_back',
-    description: 'Go back to the previous page. Use this when navigation leads to an unexpected page or you need to return.',
-    parameters: { type: 'object', properties: {}, required: [] },
-  },
-  {
-    name: 'browser_go_forward',
-    description: 'Go forward to the next page (after going back).',
-    parameters: { type: 'object', properties: {}, required: [] },
-  },
-  {
-    name: 'browser_refresh',
-    description: 'Refresh/reload the current page.',
-    parameters: { type: 'object', properties: {}, required: [] },
-  },
-  {
-    name: 'browser_switch_tab',
-    description: 'Switch to a different browser tab by its index. Use browser_list_tabs to see available tabs.',
-    parameters: {
-      type: 'object',
-      properties: {
-        index: { type: 'number', description: 'The index of the tab to switch to (0-based)' },
-      },
-      required: ['index'],
-    },
-  },
-  {
-    name: 'browser_list_tabs',
-    description: 'List all open browser tabs with their URLs and titles.',
-    parameters: { type: 'object', properties: {}, required: [] },
-  },
-  {
-    name: 'browser_wait',
-    description: 'Wait for a specific element to appear on the page. Use this after navigation to wait for dynamic content to load.',
-    parameters: {
-      type: 'object',
-      properties: {
-        selector: { type: 'string', description: 'CSS selector to wait for' },
-        timeout: { type: 'number', description: 'Maximum wait time in milliseconds (default 10000)' },
-      },
-      required: ['selector'],
-    },
-  },
-  {
-    name: 'browser_extract_text',
-    description: 'Extract all visible text content from the current page.',
-    parameters: { type: 'object', properties: {}, required: [] },
-  },
-  {
-    name: 'browser_screenshot',
-    description: 'Take a screenshot of the current page. Returns confirmation that a screenshot was captured.',
-    parameters: { type: 'object', properties: {}, required: [] },
-  },
-  {
-    name: 'browser_end',
-    description: 'Call this when the task is fully completed. Provide a summary of what was accomplished.',
-    parameters: {
-      type: 'object',
-      properties: {
-        summary: { type: 'string', description: 'Brief summary of what was accomplished' },
-      },
-      required: [],
-    },
-  },
-  {
-    name: 'request_human_help',
-    description: 'Request human help for tasks you cannot complete alone (CAPTCHA, login, payment, SMS verification). The user sees a prompt and you wait until they click Done.',
-    parameters: {
-      type: 'object',
-      properties: {
-        message: { type: 'string', description: 'What the user should do' },
-      },
-      required: ['message'],
-    },
-  },
-];
 
 export function registerBrowserTools(toolBus: ToolBus, controller?: BrowserController): void {
   if (!browserController && controller) {
     browserController = controller;
+    setBrowserController(controller);
   }
   if (!browserController) {
     throw new Error('BrowserController not provided.');
@@ -245,15 +105,89 @@ export function registerBrowserTools(toolBus: ToolBus, controller?: BrowserContr
         return { success: false, output: '', error: 'Browser context not available' };
       }
 
+      // In Electron mode, use IPC-based browser execution
+      if (RUNNING_IN_ELECTRON) {
+        logger.info(`[IPC-Browser] Executing: ${name}`);
+
+        // Execute the command by calling the webviewController in the renderer
+        // This will be done via a fetch call to a renderer endpoint with retry
+        let lastError: Error | null = null;
+        const maxRetries = 3;
+
+        for (let attempt = 0; attempt < maxRetries; attempt++) {
+          try {
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 second timeout
+
+            const response = await fetch('http://localhost:3001/api/browser/exec', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                action: name.replace('browser_', ''),
+                ...args  // Flatten params to top level
+              }),
+              signal: controller.signal
+            });
+
+            clearTimeout(timeoutId);
+
+            if (response.ok) {
+              const data = await response.json();
+              logger.info(`[IPC-Browser] Command executed: ${name} ->`, data);
+              // Ensure result is always a string, not an object
+              const rawResult = data.result || data.message || `Executed ${name}`;
+              result = typeof rawResult === 'object' && rawResult !== null
+                ? JSON.stringify(rawResult)
+                : String(rawResult);
+              return { success: true, output: result };
+            } else {
+              logger.error(`[IPC-Browser] Command failed: ${response.status}`);
+              lastError = new Error(`HTTP ${response.status}: ${response.statusText}`);
+
+              // For 5xx errors, retry immediately
+              if (response.status >= 500 && attempt < maxRetries - 1) {
+                await new Promise(r => setTimeout(r, 1000 * (attempt + 1)));
+                continue;
+              }
+
+              // For 4xx errors, don't retry
+              break;
+            }
+          } catch (fetchError) {
+            lastError = fetchError instanceof Error ? fetchError : new Error(String(fetchError));
+
+            // Retry on network errors with exponential backoff
+            if (attempt < maxRetries - 1) {
+              logger.warn({ attempt: attempt + 1, maxRetries, error: lastError.message }, "ipc_browser_retry");
+              await new Promise(r => setTimeout(r, 1000 * Math.pow(2, attempt)));
+              continue;
+            }
+
+            logger.error({ maxRetries, error: lastError.message }, "ipc_browser_all_attempts_failed");
+            break;
+          }
+        }
+
+        // All retries exhausted
+        result = `Failed to execute ${name} after ${maxRetries} attempts: ${lastError?.message || 'Unknown error'}`;
+        return { success: false, output: '', error: result };
+      }
+
+      // Non-Electron mode: use Playwright-based controller (original code)
       switch (name) {
         case 'browser_navigate':
           result = await ctrl.navigate(args.url as string);
           storeScreenshot(args.url as string);
+          // Capture updated snapshot after navigation
+          await new Promise(r => setTimeout(r, 1000)); // Wait for page to settle
+          await updateLatestSnapshot();
           break;
 
         case 'browser_click':
           result = await ctrl.click(args.refId as number);
           storeScreenshot();
+          // Also capture updated snapshot for refId resolution
+          await updateLatestSnapshot();
           break;
 
         case 'browser_type':
@@ -268,6 +202,9 @@ export function registerBrowserTools(toolBus: ToolBus, controller?: BrowserContr
           ).join('\n');
           result = `Current URL: ${snap.url}\nTitle: ${snap.title}\n\n${out}\n\n${snap.elements.length} interactive elements total.`;
           storeScreenshot(snap.url);
+          // Update global latestSnapshot for refId resolution
+          const { setLatestScreenshot } = await import('../../api/routes/browser.js');
+          setLatestScreenshot({ elements: snap.elements }, snap.url);
           break;
         }
 
@@ -380,19 +317,9 @@ export function registerBrowserTools(toolBus: ToolBus, controller?: BrowserContr
   }
 }
 
-export function registerBrowserToolsForProject(toolBus: ToolBus, pm: ProjectManager, projectId: string): void {
-  const controller = pm.getBrowserController(projectId);
-  if (!controller) throw new Error(`Browser not started for project: ${projectId}`);
-  registerBrowserTools(toolBus, controller);
-}
-
 export function getBrowserController(projectId?: string): BrowserController | null {
   if (projectId && projectManager) return projectManager.getBrowserController(projectId);
   return browserController;
-}
-
-export function setBrowserController(controller: BrowserController): void {
-  browserController = controller;
 }
 
 export async function cleanupBrowserTools(): Promise<void> {
@@ -405,3 +332,145 @@ export async function takeBrowserScreenshot(projectId?: string): Promise<string 
   if (!controller) return null;
   return controller.screenshot();
 }
+
+/**
+ * Page change detection result
+ */
+export interface PageChangeResult {
+  changed: boolean;
+  changeType: 'navigation' | 'content' | 'none';
+  reason: string;
+}
+
+/**
+ * Detect if the page has changed between two snapshots
+ * Used for multi-action batch execution - stops batch when page changes
+ */
+export async function detectPageChange(
+  previousState: PageSnapshot | null,
+  currentState: PageSnapshot | null
+): Promise<PageChangeResult> {
+  if (!previousState || !currentState) {
+    return {
+      changed: false,
+      changeType: 'none',
+      reason: 'No state comparison available'
+    };
+  }
+
+  const config = (await import('../../core/config')).getConfig();
+  const detectionMode = config.batchChangeDetection;
+
+  // Check for navigation change (most significant)
+  if (previousState.url !== currentState.url) {
+    return {
+      changed: true,
+      changeType: 'navigation',
+      reason: `URL changed from ${previousState.url} to ${currentState.url}`
+    };
+  }
+
+  if (previousState.title !== currentState.title) {
+    return {
+      changed: true,
+      changeType: 'navigation',
+      reason: `Title changed from "${previousState.title}" to "${currentState.title}"`
+    };
+  }
+
+  // Check for content change in strict mode
+  if (detectionMode === 'strict') {
+    // Element count change
+    if (previousState.elements.length !== currentState.elements.length) {
+      return {
+        changed: true,
+        changeType: 'content',
+        reason: `Element count changed from ${previousState.elements.length} to ${currentState.elements.length}`
+      };
+    }
+
+    // Check if any interactive elements changed (refId comparison)
+    const prevElements = new Map(
+      previousState.elements.map(el => [el.refId, { tag: el.tag, text: el.text }])
+    );
+    const currElements = new Map(
+      currentState.elements.map(el => [el.refId, { tag: el.tag, text: el.text }])
+    );
+
+    if (prevElements.size !== currElements.size) {
+      return {
+        changed: true,
+        changeType: 'content',
+        reason: 'Interactive elements changed (count mismatch)'
+      };
+    }
+
+    for (const [refId, currEl] of currElements) {
+      const prevEl = prevElements.get(refId);
+      if (!prevEl) {
+        return {
+          changed: true,
+          changeType: 'content',
+          reason: `New element appeared: ${refId}`
+        };
+      }
+
+      if (prevEl.tag !== currEl.tag || prevEl.text !== currEl.text) {
+        return {
+          changed: true,
+          changeType: 'content',
+          reason: `Element ${refId} changed: ${prevEl.tag}/${prevEl.text} -> ${currEl.tag}/${currEl.text}`
+        };
+      }
+    }
+  }
+
+  // No significant change detected
+  return {
+    changed: false,
+    changeType: 'none',
+    reason: 'No significant page change detected'
+  };
+}
+
+/**
+ * Store current page state for change detection
+ */
+let lastPageState: PageSnapshot | null = null;
+
+/**
+ * Update the stored page state
+ */
+export function updatePageState(state: PageSnapshot): void {
+  lastPageState = state;
+}
+
+/**
+ * Get the stored page state
+ */
+export function getLastPageState(): PageSnapshot | null {
+  return lastPageState;
+}
+
+/**
+ * Clear the stored page state
+ */
+export function clearPageState(): void {
+  lastPageState = null;
+}
+
+/**
+ * Export intervention-related functions for other modules
+ */
+export { setInterventionCallback as setOnInterventionRequested };
+
+export function hasPendingIntervention(): boolean {
+  return interventionPromise !== null;
+}
+
+export function getPendingIntervention(): { message: string; id: number } | null {
+  if (!interventionPromise) return null;
+  return { message: interventionPromise.message, id: interventionPromise.id };
+}
+
+export { resolveInterventionLocal as resolveIntervention };

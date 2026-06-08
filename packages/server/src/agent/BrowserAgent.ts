@@ -20,7 +20,10 @@ import { loadSoul } from './prompts/soul';
 import { initializeT800Tools } from '../electron/tools';
 import { StreamEmitter } from './streaming';
 import { getConfig } from '../core/config';
-import { setLatestScreenshot } from '../api/routes/browser';
+import { captureState } from './execution/state-capture';
+import { buildStateMessage } from './execution/state-message-builder';
+import { parseAgentResponse } from './execution/response-parser';
+import type { ParsedAgentResponse } from './schemas/parser';
 
 type ContentPart =
   | { type: 'text'; text: string }
@@ -50,16 +53,6 @@ export interface BrowserAgentOpts {
   enableSkillsTools?: boolean;
   /** Enable vision: send screenshots to the LLM as image inputs (default: true) */
   useVision?: boolean;
-}
-
-interface ParsedAgentResponse {
-  thinking: string;
-  evaluationPreviousGoal: string;
-  memory: string;
-  nextGoal: string;
-  actions: Array<{ name: string; args: Record<string, unknown> }>;
-  done: boolean;
-  doneText: string;
 }
 
 export class BrowserAgent {
@@ -98,7 +91,9 @@ export class BrowserAgent {
     this.useVision = opts.useVision ?? true;
 
     this.conversation = [];
-    this.maxIterations = config.compressThreshold * 2 + 10;
+    // Ensure at least 50 iterations
+    const calculatedMax = config.compressThreshold * 2 + 10;
+    this.maxIterations = Math.max(calculatedMax, 50);
     this.soul = '';
     this.workingDirectory = opts.workingDirectory ?? process.cwd();
 
@@ -207,7 +202,6 @@ Then call the appropriate tool(s). You may call multiple tools (they execute seq
 Call the browser_end tool when:
 1. The user request is fully completed, OR
 2. It is absolutely impossible to continue, OR
-3. You've reached your step limit.
 
 Set success=true only if ALL parts of the request are done. If anything is missing or uncertain, set success=false.
 Put ALL relevant findings in the summary field.
@@ -246,24 +240,7 @@ IMPORTANT: The SCREENSHOT is your most reliable source of truth. Always check it
     }
 
     try {
-      const snapshot = await ctrl.snapshot();
-      let screenshot: string | null = null;
-
-      if (this.useVision) {
-        screenshot = await ctrl.screenshot();
-      }
-
-      // Store screenshot for frontend display (via /api/browser/screenshot)
-      if (screenshot && screenshot.length > 100) {
-        setLatestScreenshot(screenshot, snapshot.url);
-      }
-
-      return {
-        output: snapshot.output || `URL: ${snapshot.url}\nTitle: ${snapshot.title}\n${snapshot.elements.length} interactive elements`,
-        screenshot,
-        url: snapshot.url,
-        title: snapshot.title,
-      };
+      return await captureState(ctrl, { useVision: this.useVision });
     } catch (e) {
       console.error('[BrowserAgent] Failed to capture state:', e);
       return { output: '', screenshot: null, url: '', title: '' };
@@ -279,56 +256,22 @@ IMPORTANT: The SCREENSHOT is your most reliable source of truth. Always check it
     screenshotBase64: string | null,
     url: string,
   ): AgentMessage {
-    const textContent = `<user_request>\n${task}\n</user_request>\n\n<agent_memory>\n${this.agentMemory || '(no memory yet)'}\n</agent_memory>\n\n<browser_state>\nCurrent URL: ${url}\n${stateOutput}\n</browser_state>`;
-
-    if (screenshotBase64 && this.useVision && screenshotBase64.length > 100) {
-      return {
-        role: 'user',
-        content: [
-          { type: 'text', text: textContent },
-          {
-            type: 'image_url',
-            image_url: {
-              url: `data:image/png;base64,${screenshotBase64}`,
-              detail: 'auto',
-            },
-          },
-        ],
-      };
-    }
-
-    return { role: 'user', content: textContent };
+    return buildStateMessage({
+      task,
+      agentMemory: this.agentMemory,
+      url,
+      stateOutput,
+      screenshotBase64,
+      useVision: this.useVision
+    }) as AgentMessage;
   }
 
   /**
    * Parse structured output from the LLM text response
+   * Uses StructuredResponseParser for robust parsing with Zod validation
    */
-  private parseAgentResponse(text: string): ParsedAgentResponse {
-    const result: ParsedAgentResponse = {
-      thinking: '',
-      evaluationPreviousGoal: '',
-      memory: '',
-      nextGoal: '',
-      actions: [],
-      done: false,
-      doneText: '',
-    };
-
-    if (!text) return result;
-
-    const thinkMatch = text.match(/<thinking>\s*([\s\S]*?)\s*<\/thinking>/i);
-    if (thinkMatch) result.thinking = thinkMatch[1].trim();
-
-    const evalMatch = text.match(/<evaluation>\s*([\s\S]*?)\s*<\/evaluation>/i);
-    if (evalMatch) result.evaluationPreviousGoal = evalMatch[1].trim();
-
-    const memMatch = text.match(/<memory>\s*([\s\S]*?)\s*<\/memory>/i);
-    if (memMatch) result.memory = memMatch[1].trim();
-
-    const goalMatch = text.match(/<next_goal>\s*([\s\S]*?)\s*<\/next_goal>/i);
-    if (goalMatch) result.nextGoal = goalMatch[1].trim();
-
-    return result;
+  private parseAgentResponse(text: string, toolCalls?: any[]): ParsedAgentResponse {
+    return parseAgentResponse({ text, toolCalls });
   }
 
   /**
@@ -379,16 +322,35 @@ IMPORTANT: The SCREENSHOT is your most reliable source of truth. Always check it
   async execute(task: string, onEvent?: (event: StepEvent) => void): Promise<AgentResult> {
     if (onEvent) {
       this.streamEmitter.onEvent((event: import('./streaming').AgentStreamEvent) => {
-        if (event.type === 'progress') {
-          onEvent({ phase: 'executing', action: 'progress', detail: `${event.iteration}/${event.maxIterations}` });
-        } else if (event.type === 'step_start') {
-          onEvent({ phase: event.phase, action: event.action, detail: event.detail });
-        } else if (event.type === 'step_complete') {
-          onEvent({ phase: event.phase, action: event.action, observation: event.observation });
-        } else if (event.type === 'error') {
-          onEvent({ phase: 'executing', action: 'error', detail: event.error });
-        }
-      });
+          switch (event.type) {
+            case 'progress':
+              onEvent({ 
+                phase: 'executing', 
+                action: 'progress', 
+                detail: `${event.iteration}/${event.maxIterations}` }
+              );
+              break;
+            case 'step_start':
+              onEvent({ 
+                phase: event.phase, 
+                action: event.action, 
+                detail: event.detail }
+              );
+              break;
+            case 'step_complete':
+              onEvent({ 
+                phase: event.phase, 
+                action: event.action, 
+                observation: event.observation });
+              break;
+            case 'error':
+              onEvent({ 
+                phase: 'executing', 
+                action: 'error', 
+                detail: event.error });
+              break;
+          }
+      })
     }
 
     const steps: StepEvent[] = [];
@@ -473,11 +435,11 @@ IMPORTANT: The SCREENSHOT is your most reliable source of truth. Always check it
 
         // Log thinking and evaluation
         if (parsed.thinking) {
-          console.log(`[BrowserAgent] 💡 Thinking: ${parsed.thinking.slice(0, 150)}...`);
+          console.log(`[BrowserAgent] Thinking: ${parsed.thinking.slice(0, 150)}...`);
           this.streamEmitter.emitThinking(parsed.thinking, 'thinking');
         }
         if (parsed.evaluationPreviousGoal) {
-          console.log(`[BrowserAgent] 📊 Eval: ${parsed.evaluationPreviousGoal}`);
+          console.log(`[BrowserAgent] Evaluation: ${parsed.evaluationPreviousGoal}`);
         }
 
         // Add assistant response to conversation
@@ -486,19 +448,29 @@ IMPORTANT: The SCREENSHOT is your most reliable source of truth. Always check it
           content: response.text || '',
         });
 
-        // Done signal — check for browser_end or LLM indicating completion
-        if (response.done || parsed.done) {
-          finalResult = response.text || '';
-          // Check if browser_end was the last action
-          const lastAction = actionsTaken[actionsTaken.length - 1];
-          if (lastAction && lastAction.includes('browser_end')) {
-            success = true;
-          } else if (parsed.evaluationPreviousGoal.toLowerCase().includes('success')) {
-            success = true;
-          } else {
-            success = actionsTaken.length > 0;
-          }
+        // Done signal — only stop if browser_end was explicitly called or max iterations reached
+        // Don't stop just because LLM naturally finished (response.done=true)
+        const lastAction = actionsTaken[actionsTaken.length - 1];
+        if (lastAction && lastAction.includes('browser_end')) {
+          finalResult = response.text || 'Task completed (browser_end called)';
+          success = true;
           break;
+        }
+
+        // Only break on done=true if there are no tool calls AND we have some content
+        // This prevents premature stopping when LLM is just pausing between tool calls
+        if ((response.done || parsed.done) && !response.tool_calls?.length) {
+          // Check if this is actual completion or just a pause
+          const hasContent = response.text && response.text.length > 50;
+          const isSuccess = parsed.evaluationPreviousGoal?.toLowerCase().includes('success');
+
+          if (hasContent || isSuccess) {
+            finalResult = response.text || 'Task completed';
+            success = isSuccess || actionsTaken.length > 0;
+            break;
+          }
+          // If no meaningful content, continue the loop
+          console.log('[BrowserAgent] LLM paused without completion - continuing loop');
         }
 
         // Execute tool calls
@@ -549,6 +521,14 @@ IMPORTANT: The SCREENSHOT is your most reliable source of truth. Always check it
             this.conversation.push(stateMsg);
           }
 
+          // Check if browser_end was called - if so, the agent has completed the task
+          if (actionsTaken.includes('browser_end')) {
+            console.log('[BrowserAgent] Agent called browser_end - stopping loop');
+            finalResult = combinedOutput || 'Task completed by agent (browser_end called)';
+            success = true;
+            break;
+          }
+
           // If all actions failed and we're in a failure loop, inject reflection
           if (!anySuccess && this.consecutiveFailures >= 3) {
             this.conversation.push({
@@ -558,11 +538,8 @@ IMPORTANT: The SCREENSHOT is your most reliable source of truth. Always check it
           }
         } else {
           // No tool calls — text-only response
-          if (actionsTaken.length > 0 && response.text && response.text.length > 50) {
-            finalResult = response.text;
-            success = true;
-            break;
-          }
+          // Don't break just because of text response - that might be LLM thinking
+          // Only break if browser_end was explicitly called (checked above) or max iterations reached
 
           if (iteration >= this.maxIterations) {
             finalResult = response.text || 'Max iterations reached';
@@ -630,11 +607,6 @@ IMPORTANT: The SCREENSHOT is your most reliable source of truth. Always check it
   cancel(): void {
     this.cancelled = true;
     this.streamEmitter.emitError('Task cancelled', false);
-  }
-
-  /** Backward-compatible alias for execute() */
-  async run(task: string): Promise<AgentResult> {
-    return this.execute(task);
   }
 
   getToolDefinitions(): ToolDefinition[] {

@@ -1,19 +1,16 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import type { AppSettings, AgentStatus, Notification } from '@/types';
+import type { AppSettings, AgentStatus } from '@/types';
 
 interface AppState extends AppSettings {
   agentStatus: AgentStatus;
-  notifications: Notification[];
   sidebarOpen: boolean;
-  currentPage: 'agent' | 'projects' | 'models' | 'provider' | 'memory' | 'sessions' | 'skills' | 'logs' | 'settings';
+  currentPage: 'agent' | 'projects' | 'models' | 'provider' | 'memory' | 'sessions' | 'skills' | 'logs' | 'schedule' | 'settings';
   colorTheme: 'default' | 'blue' | 'purple' | 'green' | 'rose' | 'cyan';
   model: string;
   provider: string;
 
   setAgentStatus: (status: Partial<AgentStatus>) => void;
-  addNotification: (notification: Omit<Notification, 'id' | 'timestamp'>) => void;
-  removeNotification: (id: string) => void;
   setSettings: (settings: Partial<AppSettings>) => void;
   setSidebarOpen: (open: boolean) => void;
   setCurrentPage: (page: AppState['currentPage']) => void;
@@ -36,7 +33,6 @@ export const useAppStore = create<AppState>()(
         rpcConnected: false,
         browserConnected: false,
       },
-      notifications: [],
       sidebarOpen: true,
       currentPage: 'agent',
       colorTheme: 'default',
@@ -44,23 +40,6 @@ export const useAppStore = create<AppState>()(
       setAgentStatus: (status) =>
         set((state) => ({
           agentStatus: { ...state.agentStatus, ...status },
-        })),
-
-      addNotification: (notification) =>
-        set((state) => ({
-          notifications: [
-            ...state.notifications,
-            {
-              ...notification,
-              id: crypto.randomUUID(),
-              timestamp: new Date(),
-            },
-          ],
-        })),
-
-      removeNotification: (id) =>
-        set((state) => ({
-          notifications: state.notifications.filter((n) => n.id !== id),
         })),
 
       setSettings: (settings) =>

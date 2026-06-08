@@ -24,6 +24,16 @@ export async function apiDelete<T>(path: string): Promise<T> {
   return res.json()
 }
 
+export async function apiPatch<T>(path: string, body?: any): Promise<T> {
+  const res = await fetch(`${API_BASE}${path}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: body ? JSON.stringify(body) : undefined,
+  })
+  if (!res.ok) throw new Error(`API ${res.status}: ${await res.text()}`)
+  return res.json()
+}
+
 export function apiStream(
   path: string,
   body: any,
@@ -32,44 +42,69 @@ export function apiStream(
   onError?: (err: Error) => void,
 ): () => void {
   let controller = new AbortController()
-  
+
   fetch(`${API_BASE}${path}`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'Accept': 'text/event-stream' },
+    headers: {
+      'Content-Type': 'application/json',
+      'Accept': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+    },
     body: JSON.stringify(body),
     signal: controller.signal,
   }).then(async (res) => {
-    if (!res.ok) throw new Error(`API ${res.status}`)
+    if (!res.ok) {
+      throw new Error(`API ${res.status}: ${res.statusText}`)
+    }
+
     const reader = res.body!.getReader()
     const decoder = new TextDecoder()
     let buffer = ''
-    
-    while (true) {
-      const { done, value } = await reader.read()
-      if (done) break
-      buffer += decoder.decode(value, { stream: true })
-      
-      const parts = buffer.split('\n\n')
-      buffer = parts.pop() || ''
-      
-      for (const part of parts) {
-        const lines = part.split('\n')
-        let event = 'message'
-        let data = ''
-        for (const line of lines) {
-          if (line.startsWith('event: ')) event = line.slice(7)
-          else if (line.startsWith('data: ')) data = line.slice(6)
-        }
-        if (data) {
-          try { onEvent(event, JSON.parse(data)) } catch { onEvent(event, data) }
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+
+        buffer += decoder.decode(value, { stream: true })
+
+        // Process complete SSE events
+        const parts = buffer.split('\n\n')
+        buffer = parts.pop() || ''
+
+        for (const part of parts) {
+          if (!part.trim()) continue
+
+          const lines = part.split('\n')
+          let event = 'message'
+          let data = ''
+
+          for (const line of lines) {
+            if (line.startsWith('event: ')) {
+              event = line.slice(7)
+            } else if (line.startsWith('data: ')) {
+              data = line.slice(6)
+            }
+          }
+
+          if (data) {
+            try {
+              onEvent(event, JSON.parse(data))
+            } catch {
+              onEvent(event, data)
+            }
+          }
         }
       }
+    } catch (err) {
+      throw new Error(`Stream reading error: ${err instanceof Error ? err.message : String(err)}`)
     }
+
     onDone?.()
   }).catch((err) => {
     if (err.name === 'AbortError') return
-    onError?.(err)
+    onError?.(err instanceof Error ? err : new Error(String(err)))
   })
-  
+
   return () => controller.abort()
 }

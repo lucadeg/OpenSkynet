@@ -24,7 +24,7 @@ interface ConversationItemProps {
   onStartEdit: (id: string, title: string) => void;
   onSaveEdit: (id: string) => void;
   onCancelEdit: () => void;
-  onDelete: (id: string) => void;
+  onDelete: (id: string) => void | Promise<void>;
   onEditTitleChange: (value: string) => void;
 }
 
@@ -106,8 +106,8 @@ const ConversationItem = memo(function ConversationItem({
               variant="ghost"
               size="icon"
               className="h-5 w-5 text-destructive hover:text-destructive"
-              onClick={() => {
-                onDelete(id);
+              onClick={async () => {
+                await onDelete(id);
                 setConfirmDelete(false);
               }}
               aria-label="Confirm delete"
@@ -200,9 +200,9 @@ export function SidebarAgent() {
     setEditTitle(title);
   };
 
-  const handleSaveEdit = (id: string) => {
+  const handleSaveEdit = async (id: string) => {
     if (editTitle.trim()) {
-      updateConversationTitle(id, editTitle);
+      await updateConversationTitle(id, editTitle);
     }
     setEditingId(null);
     setEditTitle('');
@@ -213,8 +213,8 @@ export function SidebarAgent() {
     setEditTitle('');
   };
 
-  const handleNewChat = () => {
-    const conv = createConversation('New Chat');
+  const handleNewChat = async () => {
+    const conv = await createConversation('New Chat');
     selectConversation(conv.id);
   };
 

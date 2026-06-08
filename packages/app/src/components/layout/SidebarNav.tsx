@@ -1,30 +1,10 @@
 import {
-  MessageSquare,
-  FolderOpen,
-  Bot,
-  Server,
-  Database,
-  History,
-  Package,
-  FileText,
-  Settings,
   Globe,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { navItems } from '@/lib/navigation';
 import { useAppStore } from '@/stores/useAppStore';
 import { useSandboxStore } from '@/stores/useSandboxStore';
-
-const navItems = [
-  { id: 'agent' as const, label: 'Chat', icon: MessageSquare },
-  { id: 'projects' as const, label: 'Projects', icon: FolderOpen },
-  { id: 'models' as const, label: 'Models', icon: Bot },
-  { id: 'provider' as const, label: 'Provider', icon: Server },
-  { id: 'memory' as const, label: 'Memory', icon: Database },
-  { id: 'sessions' as const, label: 'Sessions', icon: History },
-  { id: 'skills' as const, label: 'Skills', icon: Package },
-  { id: 'logs' as const, label: 'Logs', icon: FileText },
-  { id: 'settings' as const, label: 'Settings', icon: Settings },
-];
 
 export function SidebarNav() {
   const currentPage = useAppStore((state) => state.currentPage);

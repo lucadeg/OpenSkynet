@@ -2,31 +2,12 @@ import { useState, useEffect } from 'react';
 import { Command } from 'cmdk';
 import {
   MessageSquare,
-  FolderOpen,
-  Bot,
-  Server,
-  Database,
-  History,
-  Package,
-  FileText,
-  Settings,
   Plus,
   Search,
 } from 'lucide-react';
 import { useAppStore } from '@/stores/useAppStore';
 import { useChatStore } from '@/stores/useChatStore';
-
-const pages = [
-  { id: 'agent' as const, label: 'Chat', icon: MessageSquare },
-  { id: 'projects' as const, label: 'Projects', icon: FolderOpen },
-  { id: 'models' as const, label: 'Models', icon: Bot },
-  { id: 'provider' as const, label: 'Provider', icon: Server },
-  { id: 'memory' as const, label: 'Memory', icon: Database },
-  { id: 'sessions' as const, label: 'Sessions', icon: History },
-  { id: 'skills' as const, label: 'Skills', icon: Package },
-  { id: 'logs' as const, label: 'Logs', icon: FileText },
-  { id: 'settings' as const, label: 'Settings', icon: Settings },
-];
+import { navItems } from '@/lib/navigation';
 
 export function CommandPalette() {
   const [open, setOpen] = useState(false);
@@ -77,7 +58,7 @@ export function CommandPalette() {
             </Command.Empty>
 
             <Command.Group heading="Pages" className="px-1 py-1">
-              {pages.map((page) => {
+              {navItems.map((page) => {
                 const Icon = page.icon;
                 return (
                   <Command.Item
@@ -119,9 +100,10 @@ export function CommandPalette() {
                 value="New Chat"
                 onSelect={() =>
                   runAction(() => {
-                    const conv = createConversation('New Chat');
-                    selectConversation(conv.id);
-                    setCurrentPage('agent');
+                    createConversation('New Chat').then(conv => {
+                      selectConversation(conv.id);
+                      setCurrentPage('agent');
+                    });
                   })
                 }
                 className="flex items-center gap-3 px-3 py-2 text-sm rounded-md cursor-pointer aria-selected:bg-accent aria-selected:text-accent-foreground"

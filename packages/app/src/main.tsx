@@ -36,10 +36,6 @@ function ThemeProvider({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
-if (window.__TAURI__) {
-  console.log('[Tauri] Running in Tauri context');
-}
-
 try {
   const rootElement = document.getElementById('root');
 

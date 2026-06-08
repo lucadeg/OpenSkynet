@@ -215,20 +215,8 @@ export class ProjectManager {
     logger.info({ projectId }, "project_browser_stopped");
   }
 
-  getProjectInstance(projectId: string): ProjectInstance | null {
-    return this.projects.get(projectId) ?? null;
-  }
-
   getBrowserController(projectId: string): BrowserController | null {
     return this.projects.get(projectId)?.browserController ?? null;
-  }
-
-  getBrowserSession(projectId: string): BrowserSession | null {
-    return this.projects.get(projectId)?.browserSession ?? null;
-  }
-
-  getAgentLoop(projectId: string): AgentLoop | null {
-    return this.projects.get(projectId)?.agentLoop ?? null;
   }
 
   createConversation(
@@ -300,15 +288,6 @@ export class ProjectManager {
       .prepare("DELETE FROM project_conversations WHERE id = ?")
       .run(conversationId);
     return true;
-  }
-
-  conversationCount(projectId: string): number {
-    const row = this.db
-      .query(
-        "SELECT COUNT(*) as count FROM project_conversations WHERE project_id = ?"
-      )
-      .get(projectId) as any;
-    return row?.count ?? 0;
   }
 
   async ensureDefaultProject(): Promise<Project> {

@@ -303,6 +303,10 @@ export class CronManager {
     }
     return entries;
   }
+
+  invalidateCache(): void {
+    _listJobsCache.delete(this.jobsDir);
+  }
 }
 
 export class CronScheduler {
@@ -326,7 +330,7 @@ export class CronScheduler {
   reload(): void {
     for (const t of this.tasks) t.stop();
     this.tasks = [];
-    _listJobsCache.delete((this.manager as unknown as { jobsDir: string }).jobsDir);
+    this.manager.invalidateCache();
     this.loadJobs();
     logger.info("scheduler_reloaded");
   }

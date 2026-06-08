@@ -12,12 +12,23 @@ export function createAgentRoutes(deps: {
   const router = new Hono();
 
   router.post("/run", async (c) => {
-    const body = await c.req.json<{ task: string; mode?: string; model?: string; provider?: string }>();
+    const body = await c.req.json<{
+      task: string;
+      mode?: string;
+      model?: string;
+      provider?: string;
+      conversation?: Array<{ role: string; content: string; timestamp?: string }>;
+    }>();
     if (!body.task?.trim()) {
       return c.json(
         { error: "VALIDATION_ERROR", message: "task is required" },
         400,
       );
+    }
+
+    // Log conversation history if provided
+    if (body.conversation && body.conversation.length > 0) {
+      console.log(`[API Agent] Conversation history provided: ${body.conversation.length} messages`);
     }
 
     // Update provider if specified in request
@@ -101,11 +112,21 @@ export function createAgentRoutes(deps: {
             case 'intervention':
               enqueue("intervention", { message: streamEvent.message, id: streamEvent.id });
               break;
+            case 'browser_open_required':
+              enqueue("browser_open_required", {
+                reason: streamEvent.reason,
+                task: streamEvent.task,
+              });
+              break;
           }
         });
 
         try {
-          const result = await deps.agentLoop.run(body.task, body.mode);
+          const result = await deps.agentLoop.run(
+            body.task,
+            body.mode,
+            body.conversation
+          );
 
           // Save session to database after agent completes
           try {

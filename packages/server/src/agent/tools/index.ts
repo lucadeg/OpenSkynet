@@ -11,7 +11,7 @@ export { ToolBus } from './bus.js';
 export { registerBrowserTools, getBrowserController, cleanupBrowserTools, takeBrowserScreenshot } from './browser-tools.js';
 
 // Tool types
-export type { ToolResult, ToolProvider, ToolExecutor } from './interfaces.js';
+export type { ToolResult, ToolExecutor } from './interfaces.js';
 
 // Tool registry factory (legacy, kept for compatibility)
 export function createAgentToolRegistry(opts?: {

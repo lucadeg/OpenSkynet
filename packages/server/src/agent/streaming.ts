@@ -18,7 +18,8 @@ export type StreamEventType =
   | 'content'
   | 'progress'
   | 'error'
-  | 'intervention';
+  | 'intervention'
+  | 'browser_open_required';
 
 /**
  * Base interface for all streaming events
@@ -93,6 +94,15 @@ export interface InterventionEvent extends StreamEvent {
   id: number;
 }
 
+/**
+ * Browser open required event - emitted when agent needs browser panel
+ */
+export interface BrowserOpenRequiredEvent extends StreamEvent {
+  type: 'browser_open_required';
+  reason: string;
+  task: string;
+}
+
 export type AgentStreamEvent =
   | StepStartEvent
   | StepCompleteEvent
@@ -100,7 +110,8 @@ export type AgentStreamEvent =
   | ContentEvent
   | ProgressEvent
   | ErrorEvent
-  | InterventionEvent;
+  | InterventionEvent
+  | BrowserOpenRequiredEvent;
 
 /**
  * Listener for streaming events
@@ -218,6 +229,18 @@ export class StreamEmitter {
       timestamp: Date.now(),
       message,
       id,
+    });
+  }
+
+  /**
+   * Emit a browser open required event
+   */
+  emitBrowserOpenRequired(reason: string, task: string): void {
+    this.emit({
+      type: 'browser_open_required',
+      timestamp: Date.now(),
+      reason,
+      task,
     });
   }
 
@@ -342,6 +365,11 @@ export function streamEventToNotification(event: AgentStreamEvent): Record<strin
       return {
         message: event.message,
         id: event.id,
+      };
+    case 'browser_open_required':
+      return {
+        reason: event.reason,
+        task: event.task,
       };
     default:
       return {};

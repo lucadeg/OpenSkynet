@@ -8,17 +8,43 @@ const isShowcase = process.argv.includes('--showcase');
 contextBridge.exposeInMainWorld('electronAPI', {
   // Check if running in showcase mode
   isShowcase: () => isShowcase,
-  // Browser visibility control
-  browserShow: () => ipcRenderer.invoke('browser-show'),
-  browserHide: () => ipcRenderer.invoke('browser-hide'),
 
-  // Browser control methods
-  browserNavigate: (url) => ipcRenderer.invoke('browser-navigate', url),
-  browserBack: () => ipcRenderer.invoke('browser-back'),
-  browserForward: () => ipcRenderer.invoke('browser-forward'),
-  browserRefresh: () => ipcRenderer.invoke('browser-refresh'),
-  browserGetState: () => ipcRenderer.invoke('browser-get-state'),
-  browserScreenshot: () => ipcRenderer.invoke('browser-screenshot'),
+  // App info
+  getVersion: () => ipcRenderer.invoke('app:getVersion'),
+  getPlatform: () => process.platform,
+
+  // Browser controls (unified API)
+  browser: {
+    // Visibility control
+    show: () => ipcRenderer.invoke('browser-show'),
+    hide: () => ipcRenderer.invoke('browser-hide'),
+    resize: (width) => ipcRenderer.invoke('browser-resize', width),
+
+    // Navigation
+    navigate: (url) => ipcRenderer.invoke('browser-navigate', url),
+    back: () => ipcRenderer.invoke('browser-back'),
+    forward: () => ipcRenderer.invoke('browser-forward'),
+    refresh: () => ipcRenderer.invoke('browser-refresh'),
+
+    // State
+    getState: () => ipcRenderer.invoke('browser-get-state'),
+    screenshot: () => ipcRenderer.invoke('browser-screenshot'),
+
+    // IPC-based browser execution (for agent control)
+    exec: {
+      navigate: (url) => ipcRenderer.invoke('browser-exec:navigate', url),
+      click: (x, y) => ipcRenderer.invoke('browser-exec:click', x, y),
+      type: (selector, text) => ipcRenderer.invoke('browser-exec:type', selector, text),
+      snapshot: () => ipcRenderer.invoke('browser-exec:snapshot'),
+      evaluate: (script) => ipcRenderer.invoke('browser-exec:evaluate', script),
+    },
+
+    // CDP for shared browser mode (deprecated - using IPC exec instead)
+    getCdpTarget: (webContentsId) => {
+      console.log('[Preload] getCdpTarget called with webContentsId:', webContentsId);
+      return ipcRenderer.invoke('browser:get-cdp-target', webContentsId);
+    },
+  },
 
   // Agent action listener (for visual feedback)
   onAgentAction: (callback) => {
@@ -32,20 +58,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   selectFiles: () => ipcRenderer.invoke('dialog:selectFiles'),
   saveFile: (options) => ipcRenderer.invoke('dialog:saveFile', options),
 
-  // App info
-  getVersion: () => ipcRenderer.invoke('app:getVersion'),
-  getPlatform: () => process.platform,
-
-  // CDP Shared Browser
-  browser: {
-    getCdpTarget: (webContentsId) => ipcRenderer.invoke('browser:get-cdp-target', webContentsId),
-  },
-
-  // Events
+  // Events - unified message handling
   onMessage: (callback) => {
-    const subscription = (event, message) => callback(message);
-    ipcRenderer.on('main-message', subscription);
-    return () => ipcRenderer.removeListener('main-message', subscription);
+    const listener = (event, message) => callback(message);
+    ipcRenderer.on('main-message', listener);
+    return () => ipcRenderer.removeListener('main-message', listener);
   },
 
   sendMessage: (message) => ipcRenderer.send('renderer-message', message),

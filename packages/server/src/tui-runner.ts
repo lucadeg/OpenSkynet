@@ -225,7 +225,6 @@ const deps = {
 
 const handlerMods = await Promise.all([
   import("./rpc/handlers/system.js"),
-  import("./rpc/handlers/agent.js"),
   import("./rpc/handlers/browser.js"),
   import("./rpc/handlers/skills.js"),
   import("./rpc/handlers/hub.js"),

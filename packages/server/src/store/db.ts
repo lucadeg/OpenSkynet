@@ -2,6 +2,7 @@ import { Database } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { getConfig } from "../core/config";
+import { CONVERSATIONS_SCHEMA } from "./schema-conversations";
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS projects (
@@ -114,6 +115,7 @@ export function getDb(dbPath?: string): Database {
     _db = new Database(path, { create: true });
     for (const p of PRAGMAS) _db.exec(p);
     _db.exec(SCHEMA);
+    _db.exec(CONVERSATIONS_SCHEMA);
   }
   return _db;
 }

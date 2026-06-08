@@ -1,6 +1,5 @@
 import type { RPCServer } from "../server.js";
 import type { RPCHandlerDeps } from "../deps.js";
-import { takeBrowserScreenshot } from "../../agent/tools/browser-tools.js";
 import type { BrowserController } from "../../browser/controller.js";
 import type { BrowserSession } from "../../browser/session.js";
 

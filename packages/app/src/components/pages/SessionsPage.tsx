@@ -56,10 +56,11 @@ export function SessionsPage() {
   };
 
   const handleCreateSession = () => {
-    const newConv = createConversation('New Session');
-    selectConversation(newConv.id);
-    // Navigate to agent page
-    window.dispatchEvent(new CustomEvent('navigate-to-agent'));
+    createConversation('New Session').then(newConv => {
+      selectConversation(newConv.id);
+      // Navigate to agent page
+      window.dispatchEvent(new CustomEvent('navigate-to-agent'));
+    });
   };
 
   const handleSelectSession = (sessionId: string) => {

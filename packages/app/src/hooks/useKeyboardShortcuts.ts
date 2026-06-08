@@ -1,18 +1,7 @@
 import { useEffect } from 'react';
 import { useAppStore } from '@/stores/useAppStore';
 import { useChatStore } from '@/stores/useChatStore';
-
-const pages = [
-  'agent',
-  'projects',
-  'models',
-  'provider',
-  'memory',
-  'sessions',
-  'skills',
-  'logs',
-  'settings',
-] as const;
+import { navItems } from '@/lib/navigation';
 
 export function useKeyboardShortcuts() {
   const setCurrentPage = useAppStore((state) => state.setCurrentPage);
@@ -33,17 +22,18 @@ export function useKeyboardShortcuts() {
 
       if (mod && e.key === 'n') {
         e.preventDefault();
-        const conv = createConversation('New Chat');
-        selectConversation(conv.id);
-        setCurrentPage('agent');
+        createConversation('New Chat').then(conv => {
+          selectConversation(conv.id);
+          setCurrentPage('agent');
+        });
         return;
       }
 
       if (mod && e.key >= '1' && e.key <= '9') {
         e.preventDefault();
         const idx = parseInt(e.key) - 1;
-        if (idx < pages.length) {
-          setCurrentPage(pages[idx]);
+        if (idx < navItems.length) {
+          setCurrentPage(navItems[idx].id);
         }
         return;
       }

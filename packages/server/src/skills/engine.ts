@@ -7,6 +7,7 @@ import {
   statSync,
   renameSync,
   unlinkSync,
+  rmSync,
 } from "node:fs";
 import { join, resolve, relative } from "node:path";
 import type { SkillData } from "./format.js";
@@ -282,21 +283,7 @@ export class SkillEngine {
     this.validatePath(dir);
     if (!existsSync(dir)) return false;
     try {
-      const entries = readdirSync(dir, { recursive: true });
-      for (const entry of entries) {
-        unlinkSync(join(dir, String(entry)));
-      }
-      for (const entry of readdirSync(dir)) {
-        unlinkSync(join(dir, entry));
-      }
-      const historyDir = join(dir, "history");
-      if (existsSync(historyDir)) {
-        for (const f of readdirSync(historyDir)) {
-          unlinkSync(join(historyDir, f));
-        }
-      }
-      unlinkSync(join(dir, "skill.json"));
-      try { readdirSync(dir).length === 0 && unlinkSync(dir); } catch {}
+      rmSync(dir, { recursive: true, force: true });
       this.cache.delete(dir);
       logger.info({ skill: name }, "skill_deleted");
       return true;

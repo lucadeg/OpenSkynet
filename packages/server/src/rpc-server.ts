@@ -110,7 +110,6 @@ async function main() {
 
   const allHandlers: Record<string, (server: { register: (m: string, h: RPCHandler) => void }, deps: any) => void> = {};
   const handlerMods = await Promise.all([
-    import("./rpc/handlers/agent.js"),
     import("./rpc/handlers/browser.js"),
     import("./rpc/handlers/skills.js"),
     import("./rpc/handlers/hub.js"),

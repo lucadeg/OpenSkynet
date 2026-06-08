@@ -16,6 +16,13 @@ export interface ToolCallRecord {
   completedAt?: number;
 }
 
+export interface ThinkBlock {
+  content: string;
+  type?: string;
+  label?: string;
+  confidence?: number;
+}
+
 export interface Message {
   id: string;
   role: 'user' | 'assistant' | 'system';
@@ -24,7 +31,7 @@ export interface Message {
   status?: MessageStatus;
   metadata?: MessageMetadata;
   attachments?: Attachment[];
-  thinking?: string;
+  thinking?: string | ThinkBlock[];
   toolCalls?: ToolCallRecord[];
 }
 
@@ -42,15 +49,6 @@ export interface Conversation {
   messages: Message[];
   createdAt: Date;
   updatedAt: Date;
-}
-
-export interface Task {
-  id: string;
-  description: string;
-  status: 'pending' | 'running' | 'completed' | 'failed';
-  result?: string;
-  createdAt: Date;
-  completedAt?: Date;
 }
 
 export interface Skill {
@@ -84,14 +82,6 @@ export interface AppSettings {
   stealth?: boolean;
 }
 
-export interface Notification {
-  id: string;
-  type: 'success' | 'error' | 'warning' | 'info';
-  title: string;
-  message: string;
-  timestamp: Date;
-}
-
 export interface LogEntry {
   id: string;
   level: 'debug' | 'info' | 'warning' | 'error';
@@ -115,6 +105,4 @@ export interface CronJob {
   notify?: string;
 }
 
-export type { TokenUsage } from './api';
-export type { ChatState, MessageChunk, StreamingState } from './chat';
 export type { SandboxSession, SandboxStatus, ScreenshotData, InputEvent, StreamCallback } from './sandbox';

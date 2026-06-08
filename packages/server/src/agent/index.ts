@@ -1,71 +1,39 @@
 /**
  * OpenSkynet Agent System
- *
- * Primary agent:
- * - BrowserAgent: Browser-first agent with comprehensive tools
- *
- * Core infrastructure:
- * - AgentLoop: Core execution loop
- * - ToolBus: Tool registration and execution
- * - Monitoring: Budget, audit, safety
- *
- * Legacy (kept for compatibility):
- * - CheckpointManager, ContextCompressor, ProgressTracker
- * - Soul, prompts, locales
- * - Skills system
  */
 
-// Primary agent
+// Original browser agent
 export { BrowserAgent } from './BrowserAgent';
 export type { BrowserAgentOpts } from './BrowserAgent';
 
-// Core infrastructure
-export { AgentContext } from "./core/base";
-export { AgentConfig, DEFAULT_AGENT_CONFIG } from "./core/types";
-export {
-  AgentState,
-  createInitialState,
-  transitionPhase,
-  addObservation,
-  addReflection,
-  addPlanStep,
-} from "./core/state";
-export { InterruptSignal, AgentInterruptedError } from "./core/interrupt";
+// Agent loops
+export { AgentLoop } from "./loop";
+export { EnhancedAgentLoop, createEnhancedAgentLoop } from './execution/enhanced-loop';
+export type { AgentLoopOpts } from './loop';
+export type { EnhancedAgentLoopOpts, EnhancedAgentResult } from './execution/enhanced-loop';
 
-// Monitoring and safety
-export {
-  AuditLog,
-  SharedScratchpad,
-  assessRisk,
-  checkBudget,
-} from "./monitoring/guardrails";
-export type { Budget, RiskAssessment, AuditEntry } from "./monitoring/guardrails";
-export { ContextCompressor } from "./memory/compressor";
+// Tools
+export { ToolBus } from "./tools/bus";
+export type { ToolResult, ToolExecutor } from "./tools/interfaces";
+export { registerBrowserTools, createAgentToolRegistry } from "./tools";
 
-// Progress tracking
-export {
-  ProgressTracker,
-  generateMilestonesPrompt,
-  parseMilestones,
-} from "./memory/progress";
-export type { Milestone } from "./memory/progress";
+// Streaming
+export { StreamEmitter } from "./streaming";
+export type { StreamEvent, AgentStreamEvent } from "./streaming";
 
-// Checkpoint management
+// Memory
 export { CheckpointManager } from "./memory/checkpoint";
 export type { Checkpoint } from "./memory/checkpoint";
+export { ContextCompressor } from "./memory/compressor";
 
-// Prompts and personality
-export { loadSoul, saveSoul, getDefaultSoul } from "./prompts/soul";
-export { ContainerManager } from "./utils/container";
+// Prompts
+export { loadSoul, saveSoul } from "./prompts/soul";
 
-// Locales
-export {
-  SCHEDULE_KEYWORDS,
-  CHAT_KEYWORDS,
-  ACTION_VERBS,
-} from "./prompts/locales";
+// Schemas
+export * from './schemas';
 
-// Skills
-export { SkillAuditor } from "./skills/skill-auditor";
-export { SkillLearnerAgent as SkillLearner } from "./skills/skill-learner";
-export { TraceToSkill as traceToSkill } from "./skills/trace-to-skill";
+// Planning
+export * from './planning';
+
+// Factory
+export * from './factory';

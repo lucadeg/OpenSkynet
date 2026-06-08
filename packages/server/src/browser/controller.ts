@@ -1,6 +1,4 @@
 import type { Page } from "playwright";
-import { mkdirSync, existsSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
 import { getConfig } from "../core/config";
 import logger from "../core/logging";
 import { BrowserSession } from "./session";
@@ -64,15 +62,14 @@ export interface BrowserActionResult {
  */
 export class BrowserController {
   private session: BrowserSession;
-  private pageProvider: (() => Page | null) | null = null;
   private onStep?: (action: string, detail: string) => void;
-  private checkpoints: Array<{ url: string; scrollX: number; scrollY: number }> = [];
 
   constructor(opts?: {
     headless?: boolean;
     userDataDir?: string;
     onStep?: (action: string, detail: string) => void;
     session?: BrowserSession;
+    useAX?: boolean;
   }) {
     if (opts?.session) {
       this.session = opts.session;
@@ -85,18 +82,8 @@ export class BrowserController {
     this.onStep = opts?.onStep;
   }
 
-  // Set page provider
-  setPageProvider(provider: () => Page | null): void {
-    this.pageProvider = provider;
-  }
-
   // Get current page
   private page(): Page {
-    if (this.pageProvider) {
-      const page = this.pageProvider();
-      if (page) return page;
-    }
-    // Safely get pages array
     const pages = this.session?.context?.pages();
     if (!pages || pages.length === 0) {
       throw new Error("no active page - browser may not be started");
@@ -375,17 +362,6 @@ export class BrowserController {
     }
   }
 
-  async extractBySelector(selector: string): Promise<string> {
-    try {
-      const page = this.page();
-      const el = page.locator(selector).first();
-      const text = await el.innerText({ timeout: 5000 });
-      return text.trim();
-    } catch (e: any) {
-      return `Failed to extract by selector "${selector}": ${e.message}`;
-    }
-  }
-
   async waitForSelector(selector: string, timeout?: number): Promise<string> {
     try {
       const page = this.page();
@@ -403,46 +379,7 @@ export class BrowserController {
     return this.session.takeScreenshot();
   }
 
-  // === CDP Screencast — real-time frame streaming for browser display ===
-  private _screencastActive = false;
-  private _screencastFrame: string | null = null;
-
-  get screencastActive(): boolean { return this._screencastActive; }
-  get screencastFrame(): string | null { return this._screencastFrame; }
-
-  async startScreencast(): Promise<void> {
-    if (this._screencastActive) return;
-    const page = this.page();
-    try {
-      const cdp = await page.context().newCDPSession(page);
-      await cdp.send('Page.startScreencast', {
-        format: 'jpeg',
-        quality: 60,
-        maxWidth: 1280,
-        maxHeight: 800,
-        everyNthFrame: 1,
-      });
-      cdp.on('Page.screencastFrame', async ({ data, sessionId }: any) => {
-        this._screencastFrame = data;
-        await cdp.send('Page.screencastFrameAck', { sessionId }).catch(() => {});
-      });
-      this._screencastActive = true;
-    } catch (err) {
-      console.error('[Screencast] Start failed:', err);
-    }
-  }
-
-  async stopScreencast(): Promise<void> {
-    if (!this._screencastActive) return;
-    try {
-      const page = this.page();
-      const cdp = await page.context().newCDPSession(page);
-      await cdp.send('Page.stopScreencast');
-    } catch {}
-    this._screencastActive = false;
-    this._screencastFrame = null;
-  }
-
+  // === CDP input dispatch ===
   async dispatchMouse(type: string, x: number, y: number, button: string = 'left', buttons: number = 1): Promise<void> {
     const page = this.page();
     const cdp = await page.context().newCDPSession(page);
@@ -465,45 +402,6 @@ export class BrowserController {
     } else if (type === 'keyUp') {
       await page.keyboard.up(key as any);
     }
-  }
-
-  async saveCheckpoint(): Promise<number> {
-    const page = this.page();
-    const scroll = await page.evaluate(() => ({
-      x: window.scrollX,
-      y: window.scrollY,
-    }));
-    this.checkpoints.push({
-      url: page.url(),
-      scrollX: scroll.x,
-      scrollY: scroll.y,
-    });
-    this.emit("save_checkpoint", `index=${this.checkpoints.length - 1}`);
-    return this.checkpoints.length - 1;
-  }
-
-  async restoreCheckpoint(index?: number): Promise<boolean> {
-    if (this.checkpoints.length === 0) return false;
-    const idx = index ?? this.checkpoints.length - 1;
-    if (idx < 0 || idx >= this.checkpoints.length) return false;
-
-    const cp = this.checkpoints[idx];
-    try {
-      const page = this.page();
-      await page.goto(cp.url, {
-        waitUntil: "domcontentloaded",
-        timeout: 15000,
-      });
-      await page.evaluate(([x, y]) => window.scrollTo(x, y), [cp.scrollX, cp.scrollY]);
-      this.emit("restore_checkpoint", `index=${idx}`);
-      return true;
-    } catch {
-      return false;
-    }
-  }
-
-  clearCheckpoints(): void {
-    this.checkpoints = [];
   }
 
   async getUrl(): Promise<string> {

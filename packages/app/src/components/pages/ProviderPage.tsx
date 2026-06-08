@@ -8,6 +8,7 @@ import { ScrollArea } from '@/elements/data/ScrollArea';
 import { Badge } from '@/elements/feedback/Badge';
 import { useAppStore } from '@/stores/useAppStore';
 import { toast } from 'sonner';
+import { cn } from '@/lib/utils';
 
 interface ProviderInfo {
   name: string;
@@ -122,90 +123,158 @@ export function ProviderPage() {
       />
 
       <ScrollArea className="flex-1">
-        <div className="max-w-3xl mx-auto p-6 space-y-6">
-          {/* Search Bar */}
+        <div className="max-w-2xl mx-auto px-6 py-6 space-y-5">
+          {/* Search Bar - Industrial-level refinement */}
           <div className="relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-foreground" />
-            <Input
+            <Search className="absolute left-[14px] top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground/60 pointer-events-none" />
+            <input
+              type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="Search providers..."
-              className="pl-10"
+              className={cn(
+                'w-full h-10 pl-10 pr-4 rounded-lg text-sm',
+                'border border-[rgba(0,0,0,0.08)] dark:border-[rgba(255,255,255,0.1)]',
+                'bg-background',
+                'placeholder:text-muted-foreground/40',
+                'focus:outline-none',
+                'focus:border-[rgba(0,0,0,0.15)] dark:focus:border-[rgba(255,255,255,0.2)]',
+                'focus:shadow-[0_0_0_1px_rgba(0,0,0,0.05),0_2px_8px_rgba(0,0,0,0.04)]',
+                'transition-all duration-200 ease-[cubic-bezier(0.16,1,0.3,1)]'
+              )}
             />
           </div>
 
           {/* Providers List */}
-          <div>
-            <h2 className="text-lg font-semibold mb-4">Providers</h2>
+          <div className="space-y-3">
+            <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">Providers</h2>
 
             {filteredProviders.length === 0 ? (
-              <Card>
-                <CardContent className="p-8 text-center text-muted-foreground">
-                  {searchQuery ? 'No providers match your search' : 'No providers found'}
-                </CardContent>
-              </Card>
+              <div className="py-16 text-center">
+                <div className="w-16 h-16 mx-auto mb-4 rounded-2xl bg-muted/20 flex items-center justify-center">
+                  <Search className="w-6 h-6 text-muted-foreground/40" />
+                </div>
+                <p className="text-sm text-muted-foreground/70">
+                  {searchQuery ? 'No providers match your search' : 'No providers available'}
+                </p>
+              </div>
             ) : (
               <div className="space-y-2">
                 {filteredProviders.map((provider) => {
                   const isExpanded = expandedProvider === provider.name;
                   const isSelected = selectedProvider === provider.name;
+                  const status = statuses[provider.name];
 
                   return (
-                    <Card
+                    <div
                       key={provider.name}
-                      className={`cursor-pointer transition-all ${
-                        isSelected ? 'border-primary' : ''
-                      }`}
-                      onClick={() => handleSelectProvider(provider.name)}
+                      className={cn(
+                        'group relative rounded-lg border bg-card overflow-hidden',
+                        'border-[rgba(0,0,0,0.08)] dark:border-[rgba(255,255,255,0.1)]',
+                        'hover:border-[rgba(0,0,0,0.12)] dark:hover:border-[rgba(255,255,255,0.15)]',
+                        'transition-all duration-200 ease-[cubic-bezier(0.16,1,0.3,1)]',
+                        isSelected && 'border-[rgba(0,0,0,0.2)] dark:border-[rgba(255,255,255,0.25)]'
+                      )}
                     >
-                      <CardHeader className="pb-3">
-                        <div className="flex items-start justify-between">
-                          <div className="flex-1">
-                            <div className="flex items-center gap-3">
-                              <CardTitle className="text-base">{provider.display_name || provider.name}</CardTitle>
-                              {getStatusBadge(provider)}
-                            </div>
+                      {/* Main card content */}
+                      <button
+                        onClick={() => handleSelectProvider(provider.name)}
+                        className="w-full px-4 py-3.5 flex items-start gap-3 text-left"
+                      >
+                        {/* Status indicator */}
+                        <div className={cn(
+                          'mt-1 w-2 h-2 rounded-full flex-shrink-0 transition-colors duration-200',
+                          status === 'connected' ? 'bg-green-500' :
+                          status === 'error' ? 'bg-red-500' :
+                          provider.has_key ? 'bg-blue-500' :
+                          provider.needs_api_key ? 'bg-yellow-500' :
+                          'bg-muted-foreground/40'
+                        )} />
+
+                        {/* Content */}
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 mb-0.5">
+                            <span className="text-sm font-medium text-foreground truncate">
+                              {provider.display_name || provider.name}
+                            </span>
+                            {isSelected && (
+                              <Check className="w-3.5 h-3.5 text-primary flex-shrink-0" />
+                            )}
                           </div>
-                          <div className="flex items-center gap-2">
-                            {isSelected && <Check className="w-5 h-5 text-primary" />}
-                            {getStatusIcon(provider.name)}
-                            <ChevronRight
-                              className={`w-4 h-4 text-muted-foreground transition-transform ${
-                                isExpanded ? 'rotate-90' : ''
-                              }`}
-                            />
+                          <div className="flex items-center gap-2 text-xs text-muted-foreground/70">
+                            <span className="capitalize">{provider.category}</span>
+                            {provider.needs_api_key && !provider.has_key && (
+                              <span>• Requires API key</span>
+                            )}
                           </div>
                         </div>
-                      </CardHeader>
 
+                        {/* Expand icon */}
+                        <ChevronRight
+                          className={cn(
+                            'w-4 h-4 text-muted-foreground/40 flex-shrink-0 transition-transform duration-200',
+                            isExpanded && 'rotate-90'
+                          )}
+                        />
+                      </button>
+
+                      {/* Expanded content */}
                       {isExpanded && (
-                        <CardContent className="pt-0 space-y-4">
-                          {provider.needs_api_key && (
-                            <div onClick={(e) => e.stopPropagation()}>
-                              <label className="text-sm font-medium mb-2 block">API Key</label>
-                              <Input
-                                type="password"
-                                value={apiKey}
-                                onChange={(e) => setApiKey(e.target.value)}
-                                placeholder="sk-xxx..."
-                                className="mb-2"
-                              />
-                              <Button
+                        <div className="px-4 pb-4 border-t border-[rgba(0,0,0,0.04)] dark:border-[rgba(255,255,255,0.06)]">
+                          {provider.needs_api_key && !provider.has_key ? (
+                            <div className="pt-3 space-y-3">
+                              <div>
+                                <label className="text-xs font-medium text-muted-foreground/80 mb-1.5 block">
+                                  API Key
+                                </label>
+                                <input
+                                  type="password"
+                                  value={apiKey}
+                                  onChange={(e) => setApiKey(e.target.value)}
+                                  placeholder="sk-xxx..."
+                                  className={cn(
+                                    'w-full h-9 px-3 rounded-md text-sm',
+                                    'border border-[rgba(0,0,0,0.08)] dark:border-[rgba(255,255,255,0.1)]',
+                                    'bg-background',
+                                    'placeholder:text-muted-foreground/40',
+                                    'focus:outline-none',
+                                    'focus:border-[rgba(0,0,0,0.15)] dark:focus:border-[rgba(255,255,255,0.2)]',
+                                    'transition-colors duration-150'
+                                  )}
+                                />
+                              </div>
+                              <button
                                 onClick={(e) => {
                                   e.stopPropagation();
                                   handleSave();
                                 }}
                                 disabled={!apiKey}
-                                className="w-full"
+                                className={cn(
+                                  'w-full h-9 px-4 rounded-md text-sm font-medium',
+                                  'flex items-center justify-center gap-2',
+                                  'transition-all duration-200 ease-[cubic-bezier(0.16,1,0.3,1)]',
+                                  apiKey
+                                    ? 'bg-foreground text-background hover:bg-foreground/90'
+                                    : 'bg-muted/30 text-muted-foreground cursor-not-allowed'
+                                )}
                               >
-                                <Key className="w-4 h-4 mr-2" />
+                                <Key className="w-3.5 h-3.5" />
                                 Save API Key
-                              </Button>
+                              </button>
+                            </div>
+                          ) : provider.has_key ? (
+                            <div className="pt-3 flex items-center gap-2 text-xs text-green-600 dark:text-green-400">
+                              <CheckCircle className="w-3.5 h-3.5" />
+                              <span>API key configured</span>
+                            </div>
+                          ) : (
+                            <div className="pt-3 text-xs text-muted-foreground/60">
+                              No API key required
                             </div>
                           )}
-                        </CardContent>
+                        </div>
                       )}
-                    </Card>
+                    </div>
                   );
                 })}
               </div>

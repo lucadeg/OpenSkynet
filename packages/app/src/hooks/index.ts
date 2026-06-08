@@ -1,1 +1,9 @@
 export { useRPCConnection } from './useRPCConnection';
+export { useKeyboardShortcuts } from './useKeyboardShortcuts';
+export { useAgentInput } from './useAgentInput';
+export { useAgentStreaming } from './useAgentStreaming';
+export { useConversationManager } from './useConversationManager';
+export { useBrowserPanelState } from './useBrowserPanelState';
+export { useWebviewControl } from './useWebviewControl';
+export { useBrowserCommandPolling } from './useBrowserCommandPolling';
+export { usePanelResize } from './usePanelResize';

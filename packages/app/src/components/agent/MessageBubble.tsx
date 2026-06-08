@@ -1,12 +1,18 @@
-import { Copy, Check, FileText, FileImage, FileType, File, Bot, ChevronDown, ChevronRight } from 'lucide-react';
+/**
+ * Apple-Level Message Bubble
+ * Premium message display with subtle animations and beautiful typography
+ */
+
+import { Copy, Check, FileText, FileImage, FileType, File, Bot, Sparkles, ChevronDown, ChevronRight } from 'lucide-react';
 import { Message } from '@/types';
 import { cn } from '@/lib/utils';
 import { formatRelativeTime } from '@/lib/utils';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
-import { useState, memo } from 'react';
-import { ToolCallList } from './ToolCallDisplay';
+import { useState, memo, useCallback } from 'react';
+import { ExecutionDisplay } from './ExecutionDisplay';
+import { formatThinkLabel } from '@/utils/thinkTagParser';
 
 interface MessageBubbleProps {
   message: Message;
@@ -26,17 +32,17 @@ export const MessageBubble = memo(function MessageBubble({
   const isUser = message.role === 'user';
   const [copied, setCopied] = useState(false);
 
-  const handleCopy = () => {
+  const handleCopy = useCallback(() => {
     navigator.clipboard.writeText(message.content);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
     onCopy?.();
-  };
+  }, [message.content, onCopy]);
 
   const attachments = message.attachments;
 
   const getFileIcon = (type: string) => {
-    const iconClass = 'w-3.5 h-3.5 text-muted-foreground';
+    const iconClass = 'w-4 h-4';
     if (type.includes('pdf')) return <FileText className={iconClass} />;
     if (type.includes('image')) return <FileImage className={iconClass} />;
     if (type.includes('powerpoint') || type.includes('presentation') || type.includes('ppt')) {
@@ -52,97 +58,166 @@ export const MessageBubble = memo(function MessageBubble({
   };
 
   const content = message.content || (isStreaming ? '▊' : '');
-  const hasThinking = message.thinking && message.thinking.length > 0;
+
+  // Parse thinking content
+  let thinkBlocks: Array<{ content: string; label?: string }> = [];
+  if (message.thinking) {
+    if (typeof message.thinking === 'string') {
+      thinkBlocks = [{ content: message.thinking, label: 'Reasoning' }];
+    } else {
+      thinkBlocks = message.thinking.map(tb => ({
+        content: tb.content,
+        label: formatThinkLabel(tb),
+      }));
+    }
+  }
+
+  const hasThinking = thinkBlocks.length > 0;
 
   return (
     <div className={cn(
-      'flex gap-3 group animate-in fade-in slide-in-from-bottom-2 duration-300',
+      'flex gap-3 group animate-in fade-in slide-in-from-bottom-2 duration-500',
       isUser ? 'justify-end' : 'justify-start'
     )}>
       {/* Avatar for assistant */}
       {!isUser && (
-        <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
-          <Bot className="w-4 h-4 text-primary" />
+        <div className={cn(
+          "w-9 h-9 rounded-full flex items-center justify-center shrink-0",
+          "bg-gradient-to-br from-violet-500/20 to-purple-600/20",
+          "border border-violet-500/20",
+          "shadow-lg"
+        )}>
+          <Bot className="w-5 h-5 text-violet-300" />
         </div>
       )}
 
       <div className={cn(
-        'flex flex-col gap-2 max-w-[85%]',
+        'flex flex-col gap-2.5 max-w-[85%] sm:max-w-[75%] md:max-w-[65%] lg:max-w-[55%]',
         isUser && 'items-end'
       )}>
         {/* Attachments */}
         {attachments && attachments.length > 0 && (
           <div className={cn(
-            'flex flex-wrap gap-2 p-2 rounded-lg border',
+            'flex flex-wrap gap-2 p-3 rounded-2xl border',
+            'backdrop-blur-sm',
             isUser
-              ? 'border-primary/20 bg-primary/5'
-              : 'border-border/50 bg-muted/30'
+              ? 'border-violet-500/20 bg-violet-500/5'
+              : 'border-white/10 bg-white/5'
           )}>
             {attachments.map((attachment) => (
               <div
                 key={attachment.id}
-                className="flex items-center gap-2 px-2 py-1.5 bg-background rounded-md text-xs border border-border/50"
+                className={cn(
+                  'flex items-center gap-2.5 px-3 py-2 rounded-xl',
+                  'bg-background/80 border border-white/10',
+                  'transition-all duration-200',
+                  'hover:bg-background hover:border-white/20'
+                )}
               >
-                {getFileIcon(attachment.type)}
-                <span className="max-w-[120px] truncate">{attachment.name}</span>
-                <span className="text-muted-foreground/70">
-                  ({formatFileSize(attachment.size)})
-                </span>
+                <div className={cn(
+                  'p-1.5 rounded-lg',
+                  isUser ? 'bg-violet-500/10 text-violet-300' : 'bg-white/5 text-white/60'
+                )}>
+                  {getFileIcon(attachment.type)}
+                </div>
+                <div className="flex flex-col">
+                  <span className="text-sm font-medium text-white/90 max-w-[120px] truncate">
+                    {attachment.name}
+                  </span>
+                  <span className="text-xs text-white/40">
+                    {formatFileSize(attachment.size)}
+                  </span>
+                </div>
               </div>
             ))}
           </div>
         )}
 
-        {/* Thinking section (collapsible) */}
-        {hasThinking && onToggleThinking && (
-          <div className="rounded-lg border border-amber-200 dark:border-amber-800 overflow-hidden bg-amber-50/50 dark:bg-amber-950/20">
-            <button
-              onClick={onToggleThinking}
-              className="w-full px-3 py-2 flex items-center gap-2 text-xs font-medium text-amber-700 dark:text-amber-300 hover:bg-amber-100/50 dark:hover:bg-amber-900/30 transition-colors"
-            >
-              {isThinkingExpanded ? (
-                <ChevronDown className="w-3.5 h-3.5" />
-              ) : (
-                <ChevronRight className="w-3.5 h-3.5" />
-              )}
-              <span>Reasoning</span>
-            </button>
-            {isThinkingExpanded && (
-              <div className="px-3 py-2 bg-amber-100/30 dark:bg-amber-900/10 border-t border-amber-200 dark:border-amber-800">
-                <div className="prose prose-sm max-w-none dark:prose-invert text-xs text-amber-900 dark:text-amber-200">
-                  <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                    {message.thinking || ''}
-                  </ReactMarkdown>
-                </div>
-              </div>
-            )}
+        {/* Tool Calls - Using new ExecutionDisplay */}
+        {message.toolCalls && message.toolCalls.length > 0 && !isStreaming && (
+          <div className="max-w-full">
+            <ExecutionDisplay
+              steps={message.toolCalls.map(tc => ({
+                id: tc.id,
+                type: 'tool' as const,
+                timestamp: tc.startedAt,
+                duration: tc.completedAt ? tc.completedAt - tc.startedAt : undefined,
+                status: tc.status,
+                action: tc.action,
+                detail: tc.detail,
+                observation: tc.observation,
+                error: tc.status === 'error' ? {
+                  message: tc.observation || 'An error occurred',
+                  code: tc.error?.code,
+                  suggestion: tc.error?.suggestion,
+                  retryable: tc.error?.retryable ?? true
+                } : undefined
+              }))}
+              showSummary
+            />
           </div>
         )}
 
-        {/* Tool Calls */}
-        {message.toolCalls && message.toolCalls.length > 0 && !isStreaming && (
-          <div className="max-w-full">
-            <ToolCallList toolCalls={message.toolCalls} />
+        {/* Loading skeleton for streaming messages */}
+        {isStreaming && !isUser && !content && (
+          <div className="space-y-3 px-5 py-4 rounded-2xl bg-white/5 border border-white/10">
+            <div className="flex items-center gap-3">
+              <div className="w-3 h-3 rounded-full bg-violet-500/30 animate-pulse" />
+              <div className="h-3 bg-white/10 rounded-full animate-pulse w-24" />
+            </div>
+            <div className="space-y-2">
+              <div className="h-2 bg-white/5 rounded-full animate-pulse w-3/4" />
+              <div className="h-2 bg-white/5 rounded-full animate-pulse w-1/2" />
+              <div className="h-2 bg-white/5 rounded-full animate-pulse w-5/6" />
+            </div>
           </div>
         )}
 
         {/* Main content */}
         <div
           className={cn(
-            'relative px-4 py-3 rounded-xl text-sm leading-relaxed shadow-sm transition-all duration-200',
+            'relative px-5 py-4 rounded-2xl text-sm leading-relaxed',
+            'transition-all duration-300',
             isUser
-              ? 'bg-primary text-primary-foreground rounded-tr-sm'
-              : 'bg-card text-card-foreground border border-border/50 rounded-tl-sm'
+              ? cn(
+                  'bg-gradient-to-br from-violet-600 to-purple-700',
+                  'text-white shadow-lg shadow-violet-900/20'
+                )
+              : cn(
+                  'bg-white/5 border border-white/10',
+                  'backdrop-blur-sm',
+                  'text-white/90'
+                )
           )}
         >
-          <div className="prose prose-sm max-w-none dark:prose-invert">
+          <div className="prose prose-sm max-w-none dark:prose-invert prose-p:my-0 prose-ul:my-0 prose-ol:my-0">
             <ReactMarkdown
               remarkPlugins={[remarkGfm]}
               rehypePlugins={[rehypeHighlight]}
               components={{
                 p: ({ children }) => <p className="my-0 last:mb-0">{children}</p>,
-                ul: ({ children }) => <ul className="my-0 space-y-0">{children}</ul>,
-                ol: ({ children }) => <ol className="my-0 space-y-0">{children}</ol>,
+                ul: ({ children }) => <ul className="my-0 space-y-1">{children}</ul>,
+                ol: ({ children }) => <ol className="my-0 space-y-1">{children}</ol>,
+                code: ({ children, className }) => (
+                  <code className={cn(
+                    'px-1.5 py-0.5 rounded text-xs',
+                    isUser
+                      ? 'bg-white/10 text-white/90'
+                      : 'bg-white/10 text-white/90 font-mono'
+                  )}>
+                    {children}
+                  </code>
+                ),
+                pre: ({ children }) => (
+                  <pre className={cn(
+                    'p-3 rounded-xl overflow-x-auto text-xs',
+                    isUser
+                      ? 'bg-white/10 text-white/90'
+                      : 'bg-white/5 border border-white/10 text-white/70'
+                  )}>
+                    {children}
+                  </pre>
+                )
               }}
             >
               {content}
@@ -153,36 +228,30 @@ export const MessageBubble = memo(function MessageBubble({
           <button
             onClick={handleCopy}
             className={cn(
-              'absolute top-2 right-2 p-1.5 rounded-md',
+              'absolute top-3 right-3 p-2 rounded-xl',
               'opacity-0 group-hover:opacity-100',
-              'transition-opacity duration-200',
-              'hover:bg-black/10 dark:hover:bg-white/10',
+              'transition-all duration-200',
+              'hover:scale-110',
               isUser
-                ? 'text-primary-foreground/70 hover:text-primary-foreground'
-                : 'text-muted-foreground hover:text-foreground'
+                ? 'bg-white/10 text-white/70 hover:bg-white/20 hover:text-white'
+                : 'bg-white/5 text-white/40 hover:bg-white/10 hover:text-white/70'
             )}
             title="Copy"
             aria-label="Copy to clipboard"
           >
             {copied ? (
-              <Check className="w-3.5 h-3.5" />
+              <Check className="w-4 h-4" />
             ) : (
-              <Copy className="w-3.5 h-3.5" />
+              <Copy className="w-4 h-4" />
             )}
           </button>
 
           {isStreaming && !isUser && <span className="typing-cursor" />}
-
-          {message.status === 'error' && (
-            <div className="mt-1.5 text-xs text-destructive">
-              Failed to send
-            </div>
-          )}
         </div>
 
         {/* Timestamp */}
         {message.timestamp && (
-          <span className="text-[11px] text-muted-foreground/70 px-1">
+          <span className="text-[11px] text-white/30 px-1">
             {formatRelativeTime(message.timestamp)}
           </span>
         )}

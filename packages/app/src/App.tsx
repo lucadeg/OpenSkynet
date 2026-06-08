@@ -16,6 +16,7 @@ const MemoryPage = lazy(() => import('@/components/pages/MemoryPage').then(m => 
 const SessionsPage = lazy(() => import('@/components/pages/SessionsPage').then(m => ({ default: m.SessionsPage })));
 const SkillsPage = lazy(() => import('@/components/pages/SkillsPage').then(m => ({ default: m.SkillsPage })));
 const LogsPage = lazy(() => import('@/components/pages/LogsPage').then(m => ({ default: m.LogsPage })));
+const SchedulePage = lazy(() => import('@/components/pages/SchedulePage').then(m => ({ default: m.SchedulePage })));
 const SettingsPage = lazy(() => import('@/components/pages/SettingsPage').then(m => ({ default: m.SettingsPage })));
 
 function PageLoader() {
@@ -28,8 +29,6 @@ function PageLoader() {
 
 function App() {
   const currentPage = useAppStore((state) => state.currentPage);
-  const theme = useAppStore((state) => state.theme);
-  const colorTheme = useAppStore((state) => state.colorTheme);
 
   useRPCConnection();
   useKeyboardShortcuts();
@@ -37,21 +36,6 @@ function App() {
   useEffect(() => {
     initializeRendererIPC();
   }, []);
-
-  useEffect(() => {
-    const root = document.documentElement;
-
-    if (theme === 'dark') {
-      root.classList.add('dark');
-    } else {
-      root.classList.remove('dark');
-    }
-
-    root.classList.remove('theme-blue', 'theme-purple', 'theme-green', 'theme-rose', 'theme-cyan');
-    if (colorTheme !== 'default') {
-      root.classList.add(`theme-${colorTheme}`);
-    }
-  }, [theme, colorTheme]);
 
   const renderPage = () => {
     switch (currentPage) {
@@ -71,6 +55,8 @@ function App() {
         return <SkillsPage />;
       case 'logs':
         return <LogsPage />;
+      case 'schedule':
+        return <SchedulePage />;
       case 'settings':
         return <SettingsPage />;
       default:

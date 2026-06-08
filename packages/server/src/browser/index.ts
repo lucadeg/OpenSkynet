@@ -5,4 +5,4 @@ export {
   type PageSnapshot,
   type BrowserActionResult,
 } from "./controller";
-export { isStealthAvailable, buildStealthLaunchArgs } from "./stealth";
+export { PageState } from "./perception";

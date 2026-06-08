@@ -44,12 +44,10 @@ export function AppLayout({ children }: AppLayoutProps) {
         {children}
       </main>
 
-      {/* Sandbox panel (browser) - only shown when open */}
-      {sandboxOpen && (
-        <div className="flex-shrink-0 w-[600px] border-l border-border overflow-hidden bg-background">
-          <SandboxPanel />
-        </div>
-      )}
+      {/* Sandbox panel (browser) - always rendered during testing */}
+      <div className="flex-shrink-0 w-[600px] border-l border-border overflow-hidden bg-background">
+        <SandboxPanel />
+      </div>
     </div>
   );
 }

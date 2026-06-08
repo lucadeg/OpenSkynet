@@ -50,13 +50,3 @@ export function createBrowserAgent(config: CreateBrowserAgentConfig): BrowserAge
   });
 }
 
-/**
- * Convenience function to run a task with the BrowserAgent
- */
-export async function runBrowserTask(
-  task: string,
-  config: CreateBrowserAgentConfig
-): Promise<import("../core/types").AgentResult> {
-  const agent = createBrowserAgent(config);
-  return agent.run(task);
-}

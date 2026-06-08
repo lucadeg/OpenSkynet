@@ -21,7 +21,7 @@ export interface ApiServerOptions {
 }
 
 export function startApiServer(opts: ApiServerOptions) {
-  const config = getConfig();
+  getConfig();
   const port = opts.port ?? parseInt(process.env.SEDIMAN_API_PORT ?? "3001", 10);
 
   const wsDeps: WSDeps = { ...opts.deps, rpcDeps: opts.rpcDeps };

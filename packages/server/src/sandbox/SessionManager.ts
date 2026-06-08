@@ -149,21 +149,6 @@ export class SandboxSessionManager {
 
     this.sessions.delete(sessionId);
   }
-
-  async cleanupOldSessions(maxAge = 24 * 60 * 60 * 1000): Promise<void> {
-    const now = Date.now();
-    const toRemove: string[] = [];
-
-    for (const [id, session] of this.sessions) {
-      if (now - session.lastUsedAt > maxAge) {
-        toRemove.push(id);
-      }
-    }
-
-    for (const id of toRemove) {
-      await this.cleanupSession(id);
-    }
-  }
 }
 
 // Export singleton instance for use across the application
