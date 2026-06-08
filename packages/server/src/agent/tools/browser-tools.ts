@@ -13,8 +13,53 @@ import { setLatestScreenshot } from '../../api/routes/browser.js';
 let browserController: BrowserController | null = null;
 let projectManager: ProjectManager | null = null;
 
+// Human intervention system — agent can request help from user
+let pendingInterventionId = 0;
+let interventionPromise: { resolve: (v: string) => void; message: string; id: number } | null = null;
+
+export function hasPendingIntervention(): boolean {
+  return interventionPromise !== null;
+}
+
+export function getPendingIntervention(): { message: string; id: number } | null {
+  if (!interventionPromise) return null;
+  return { message: interventionPromise.message, id: interventionPromise.id };
+}
+
+export function resolveIntervention(result: string): boolean {
+  if (!interventionPromise) return false;
+  interventionPromise.resolve(result);
+  interventionPromise = null;
+  console.log('[BrowserTools] Intervention resolved:', result);
+  return true;
+}
+
 export function setProjectManager(pm: ProjectManager): void {
   projectManager = pm;
+}
+
+/**
+ * Capture and store a screenshot for the frontend, fire-and-forget.
+ * Never throws — suppresses all errors silently.
+ */
+function captureAndStoreScreenshot(url?: string): void {
+  const ctrl = browserController;
+  if (!ctrl) return;
+
+  // Fire-and-forget: don't block tool execution on screenshot capture
+  (async () => {
+    try {
+      await new Promise(resolve => setTimeout(resolve, 300));
+      const screenshot = await ctrl.screenshot();
+      if (screenshot && screenshot.length > 100) {
+        const currentUrl = url || ctrl.getSession()?.context?.pages()[0]?.url() || 'Unknown';
+        setLatestScreenshot(screenshot, currentUrl);
+        console.log('[BrowserTools] Screenshot stored for client:', currentUrl);
+      }
+    } catch (e) {
+      // Silently ignore screenshot failures
+    }
+  })();
 }
 
 export function registerBrowserTools(toolBus: ToolBus, controller?: BrowserController): void {
@@ -95,6 +140,26 @@ export function registerBrowserTools(toolBus: ToolBus, controller?: BrowserContr
       description: 'Take a screenshot and store it for UI display (use this after any operation to update the view)',
       parameters: { type: 'object', properties: {}, required: [] },
     },
+    {
+      name: 'browser_end',
+      description: 'Call this tool when you have completed the task and are ready to report results. This signals that you are done and should stop.',
+      parameters: { type: 'object', properties: {
+        summary: {
+          type: 'string',
+          description: 'Brief summary of what was accomplished'
+        }
+      }, required: [] },
+    },
+    {
+      name: 'request_human_help',
+      description: 'Request human help for tasks the agent cannot complete alone (CAPTCHA solving, login, payment, SMS verification, etc). The user will be shown a prompt and the agent will wait until the user clicks Done. Provide a clear message describing what the user needs to do.',
+      parameters: { type: 'object', properties: {
+        message: {
+          type: 'string',
+          description: 'What the user should do (e.g. "Please solve the reCAPTCHA on the page", "Please log in with your credentials")'
+        }
+      }, required: ['message'] },
+    },
   ];
 
   // Create tool executor
@@ -153,23 +218,12 @@ export function registerBrowserTools(toolBus: ToolBus, controller?: BrowserContr
         case 'browser_navigate':
           result = await currentController.navigate(args.url as string);
           console.log('[BrowserTools] Navigation result:', result);
-
-          // Take screenshot after navigation for client display
-          try {
-            await new Promise(resolve => setTimeout(resolve, 2000)); // Wait for page to load
-            const screenshot = await currentController.screenshot();
-            if (screenshot && typeof screenshot === 'string' && screenshot.length > 100) {
-              console.log('[BrowserTools] Screenshot taken:', screenshot.length, 'bytes');
-              // Store screenshot for client retrieval
-              setLatestScreenshot(screenshot, args.url as string);
-            }
-          } catch (e) {
-            console.log('[BrowserTools] Screenshot failed:', e);
-          }
+          captureAndStoreScreenshot(args.url as string);
           break;
         case 'browser_click':
           result = await currentController.click(args.refId as number);
           console.log('[BrowserTools] Click result:', result);
+          captureAndStoreScreenshot();
           break;
         case 'browser_type':
           result = await currentController.typeText(
@@ -178,16 +232,16 @@ export function registerBrowserTools(toolBus: ToolBus, controller?: BrowserContr
             args.submit as boolean
           );
           console.log('[BrowserTools] Type result:', result);
+          captureAndStoreScreenshot();
           break;
         case 'browser_snapshot':
           const snapshot = await currentController.snapshot();
-          result = JSON.stringify({
-            url: snapshot.url,
-            title: snapshot.title,
-            elements: snapshot.elements.slice(0, 20),
-            elementCount: snapshot.elements.length,
-          });
-          console.log('[BrowserTools] Snapshot result:', result.substring(0, 100) + '...');
+          const output = snapshot.output || snapshot.elements.map(
+            (el, i) => `[${el.refId}]<${el.tag}>${el.text ? ' ' + JSON.stringify(el.text.slice(0, 100)) : ''}`
+          ).join('\\n');
+          result = `Current URL: ${snapshot.url}\\nTitle: ${snapshot.title}\\n\\n${output}\n\\n${snapshot.elements.length} interactive elements total.`;
+          console.log('[BrowserTools] Snapshot:', snapshot.elements.length, 'elements');
+          captureAndStoreScreenshot(snapshot.url);
           break;
         case 'browser_extract_text':
           result = await currentController.extractText();
@@ -197,24 +251,62 @@ export function registerBrowserTools(toolBus: ToolBus, controller?: BrowserContr
           const screenshot = await currentController.screenshot();
           result = screenshot ? `Screenshot taken (${screenshot.length} bytes)` : 'Screenshot failed';
           console.log('[BrowserTools] Screenshot result:', result);
-
-          // Store screenshot for client retrieval
-          if (screenshot && typeof screenshot === 'string' && screenshot.length > 100) {
+          if (screenshot && screenshot.length > 100) {
             setLatestScreenshot(screenshot, currentController.getSession()?.context?.pages()[0]?.url() || 'Unknown');
             console.log('[BrowserTools] Screenshot stored for client');
           }
           break;
         case 'browser_take_and_store_screenshot':
           const manualScreenshot = await currentController.screenshot();
-          if (manualScreenshot && typeof manualScreenshot === 'string' && manualScreenshot.length > 100) {
+          if (manualScreenshot && manualScreenshot.length > 100) {
             const currentUrl = currentController.getSession()?.context?.pages()[0]?.url() || 'Unknown';
             setLatestScreenshot(manualScreenshot, currentUrl);
             result = `Screenshot captured and stored for display (${manualScreenshot.length} bytes)`;
-            console.log('[BrowserTools] Manual screenshot stored for client display:', currentUrl);
+            console.log('[BrowserTools] Manual screenshot stored:', currentUrl);
           } else {
             result = 'Failed to capture screenshot';
             console.log('[BrowserTools] Manual screenshot failed');
           }
+          break;
+        case 'browser_end':
+          const summary = args.summary || 'Task completed';
+          result = `Task completed: ${summary}`;
+          console.log('[BrowserTools] Browser end called with summary:', summary);
+          break;
+        case 'request_human_help':
+          const helpMessage = (args.message as string) || 'Agent needs your assistance';
+          console.log('[BrowserTools] Human help requested:', helpMessage);
+          
+          // Take a screenshot so the user can see the current state
+          try {
+            const helpShot = await currentController.screenshot();
+            if (helpShot) {
+              setLatestScreenshot(helpShot, currentController.getSession()?.context?.pages()[0]?.url() || 'Unknown');
+            }
+          } catch {}
+          
+          // Block until user clicks "Done" (or 2-minute timeout)
+          const interventionId = ++pendingInterventionId;
+          try {
+            const userResponse = await new Promise<string>((resolve) => {
+              interventionPromise = { resolve, message: helpMessage, id: interventionId };
+              // Timeout after 2 minutes
+              setTimeout(() => {
+                if (interventionPromise?.id === interventionId) {
+                  resolve('timeout');
+                }
+              }, 120000);
+            });
+            
+            if (userResponse === 'timeout') {
+              result = 'Human intervention timed out after 2 minutes. The user did not respond.';
+            } else {
+              result = `Human intervention completed: ${userResponse}`;
+            }
+          } catch {
+            result = 'Human intervention cancelled';
+          }
+          interventionPromise = null;
           break;
         default:
           console.log('[BrowserTools] Unknown tool:', name);

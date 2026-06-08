@@ -8,6 +8,8 @@ import { ContextCompressor } from "../memory/compressor";
 import { ProgressTracker } from "../memory/progress";
 import { AuditLog, SharedScratchpad, checkBudget, type Budget } from "../monitoring/guardrails";
 import { loadSoul } from "../prompts/soul";
+import { takeBrowserScreenshot } from "../tools/browser-tools";
+import { setLatestScreenshot } from "../../api/routes/browser";
 import logger from "../../core/logging";
 import { getConfig } from "../../core/config";
 import {
@@ -22,7 +24,7 @@ import {
 } from "../loop/index";
 import { StreamEmitter } from "../streaming";
 
-type Message = { role: string; content: string };
+type Message = { role: string; content: string; tool_calls?: any[]; tool_call_id?: string; name?: string };
 type TaskCategory = "simple" | "complex" | "browser" | "research" | "creative";
 type TaskPlan = { steps: Array<{ description: string; strategy: string }> };
 
@@ -164,25 +166,18 @@ export class AgentLoop {
         let fullContent = "";
 
         try {
-          // Use streaming to get chunks as they arrive
-          const stream = this.llmProvider.chatStream(messages, tools, systemPrompt);
+          // Use streaming with tool support
+          const stream = this.llmProvider.chatStreamWithTools(
+            messages,
+            tools,
+            systemPrompt,
+            (chunk) => {
+              // Emit content event for each chunk
+              this.streamEmitter.emitContent(chunk, false);
+            }
+          );
 
-          for await (const chunk of stream) {
-            fullContent += chunk;
-            // Emit content event for each chunk
-            this.streamEmitter.emitContent(chunk, false);
-          }
-
-          // Emit final content event
-          this.streamEmitter.emitContent(fullContent, true);
-
-          // Create a response object from the accumulated content
-          // This maintains compatibility with the rest of the code
-          response = {
-            text: fullContent,
-            tool_calls: [],
-            usage: null,
-          };
+          response = await stream;
         } catch (err) {
           const errorMsg = err instanceof Error ? err.message : String(err);
           logger.error({ err: errorMsg, iteration }, "llm_call_failed");
@@ -235,6 +230,9 @@ export class AgentLoop {
             }
           }
 
+          // Fire-and-forget screenshot capture so the frontend panel stays in sync
+          this.captureBrowserState();
+
           // Note: Content was already streamed and emitted during the LLM call above
           // No need to emit again here
         } else {
@@ -246,14 +244,21 @@ export class AgentLoop {
             this.addAssistantMessage(parsed.visible);
           }
 
-          finalResult = parsed.visible ?? fullContent;
-          done = true;
+          // Only set done if browser_end was called OR if this is a non-browser task
+          const browserEndCalled = actionsTaken.includes("browser_end");
+          if (browserEndCalled || category !== "browser") {
+            finalResult = parsed.visible ?? fullContent;
+            done = true;
 
-          steps.push({
-            phase: "done",
-            action: "response",
-            detail: finalResult,
-          });
+            steps.push({
+              phase: "done",
+              action: browserEndCalled ? "browser_end" : "response",
+              detail: finalResult,
+            });
+          } else {
+            // For browser tasks without browser_end, add a user message to continue
+            this.addUserMessage("Please continue with the next step. Call browser_end when you have completed the task.");
+          }
         }
 
         this.budget.usedIterations = iteration;
@@ -350,6 +355,7 @@ export class AgentLoop {
 
       while (toolRound < maxToolRounds) {
         // Use chatStreamWithTools to get tool calls
+        console.log('[AgentLoop] Turbo path: Round', toolRound + 1, '- Sending messages:', JSON.stringify(messages, null, 2));
         const response = await this.llmProvider.chatStreamWithTools(
           messages,
           tools,
@@ -399,11 +405,21 @@ export class AgentLoop {
         // Execute tool calls
         console.log('[AgentLoop] Turbo path: Round', toolRound + 1, '- Executing tool calls:', response.tool_calls.map(tc => tc.name));
 
-        // Add assistant message with tool calls
+        // Convert tool_calls to OpenAI/Minimax format with arguments as JSON strings
+        const formattedToolCalls = response.tool_calls.map(tc => ({
+          id: tc.id,
+          type: "function",
+          function: {
+            name: tc.name,
+            arguments: JSON.stringify(tc.arguments)
+          }
+        }));
+
+        // Add assistant message with tool calls in correct format
         messages.push({
           role: "assistant",
           content: response.text || "",
-          tool_calls: response.tool_calls
+          tool_calls: formattedToolCalls
         });
 
         for (const tc of response.tool_calls) {
@@ -422,19 +438,49 @@ export class AgentLoop {
           allSteps.push(step);
 
           try {
-            const result = await this.toolBus.execute(action, tc.arguments);
-            console.log('[AgentLoop] Turbo path: Tool result:', result.success);
-            step.observation = result.success ? (result.output ?? "") : (result.error ?? "");
+            // Retry logic for browser actions
+            let result;
+            let retries = 0;
+            const maxRetries = action.startsWith("browser_") ? 3 : 1; // Browser actions get 3 retries
+
+            while (retries < maxRetries) {
+              try {
+                result = await this.toolBus.execute(action, tc.arguments);
+                if (result.success) break; // Success, exit retry loop
+
+                retries++;
+                if (retries < maxRetries) {
+                  console.log(`[AgentLoop] Action ${action} failed, retry ${retries}/${maxRetries}`);
+                  await new Promise(resolve => setTimeout(resolve, 1000 * retries)); // Wait before retry
+                }
+              } catch (execErr) {
+                retries++;
+                if (retries >= maxRetries) throw execErr;
+                await new Promise(resolve => setTimeout(resolve, 1000 * retries));
+              }
+            }
+
+            console.log('[AgentLoop] Tool result:', result?.success);
+            step.observation = result?.success ? (result?.output ?? "") : (result?.error ?? "");
 
             // Emit step complete event
-            this.streamEmitter.emitStepComplete("executing", action, step.observation, result.success);
+            this.streamEmitter.emitStepComplete("executing", action, step.observation, result?.success ?? false);
 
-            // Add tool response message
+            // Add tool response message using OpenAI/Minimax standard format
             messages.push({
               role: "tool",
               content: step.observation || "",
               tool_call_id: tc.id
             });
+
+            // Track successful browser actions
+            if (result?.success) {
+              this.scratchpad.set("last_successful_action", JSON.stringify({
+                action,
+                args: tc.arguments,
+                output: result.output
+              }));
+            }
           } catch (err) {
             const errMsg = err instanceof Error ? err.message : String(err);
             console.log('[AgentLoop] Turbo path: Tool error:', errMsg);
@@ -442,7 +488,7 @@ export class AgentLoop {
 
             this.streamEmitter.emitStepComplete("executing", action, errMsg, false);
 
-            // Add tool response message with error
+            // Add tool response message with error using OpenAI/Minimax standard format
             messages.push({
               role: "tool",
               content: errMsg,
@@ -450,6 +496,9 @@ export class AgentLoop {
             });
           }
         }
+
+        // Fire-and-forget screenshot capture so the frontend panel stays in sync
+        this.captureBrowserState();
 
         toolRound++;
       }
@@ -496,10 +545,12 @@ export class AgentLoop {
     }
 
     const lower = task.toLowerCase();
-    const browserKeywords = ["browse", "navigate", "click", "open website", "open page", "web page", "screenshot", "scroll"];
+    // Enhanced browser keyword detection
+    const browserKeywords = ["browse", "navigate", "click", "open website", "open page", "web page", "screenshot", "scroll", "visit", "go to", "search", "google", "find", "type", "input"];
     const researchKeywords = ["research", "find information", "compare", "analyze", "gather data", "summarize"];
     const creativeKeywords = ["write", "create", "compose", "design", "draft", "generate content"];
 
+    // Check for browser/search tasks first (more specific)
     if (browserKeywords.some((k) => lower.includes(k))) return "browser";
     if (researchKeywords.some((k) => lower.includes(k))) return "research";
     if (creativeKeywords.some((k) => lower.includes(k))) return "creative";
@@ -512,7 +563,51 @@ export class AgentLoop {
     return wordCount <= 15 && !/[;|&]/.test(task);
   }
 
+  private extractSearchQuery(task: string): string {
+    const lower = task.toLowerCase();
+
+    // Extract search query from various patterns
+    const patterns = [
+      /search (?:for|in|on|at)?\s+["']?([^"'\n]+?)["']?(?:\s+(?:on|at|in|via|using|with))?$/i,
+      /google (?:for)?\s+["']?([^"'\n]+?)["']?$/i,
+      /find (?:information|about|details)?\s+(?:about|for)?\s+["']?([^"'\n]+?)["']?$/i,
+      /visit\s+\w+\s+and\s+search\s+(?:for)?\s+["']?([^"'\n]+?)["']?$/i,
+    ];
+
+    for (const pattern of patterns) {
+      const match = task.match(pattern);
+      if (match && match[1]) {
+        return match[1].trim();
+      }
+    }
+
+    // Fallback: check for common terms
+    if (lower.includes("tesla")) return "Tesla official site";
+    if (lower.includes("elon")) return "Elon Musk";
+
+    return "";
+  }
+
   private createPlan(task: string, category: TaskCategory): TaskPlan {
+    const lower = task.toLowerCase();
+
+    // For browser/search tasks, create specific steps
+    if (category === "browser" || lower.includes("search") || lower.includes("visit")) {
+      // Extract search query if present
+      const searchMatch = task.match(/(?:search|find|google|for)?\s*["']?([^"'\n]+)["']?\s*(?:on|at|in|via)?\s*(?:google|search)?/i);
+      const searchQuery = searchMatch ? searchMatch[1] : "the target";
+
+      return {
+        steps: [
+          { description: `Navigate to website`, strategy: "direct" },
+          { description: `Take snapshot to find interactive elements`, strategy: "direct" },
+          { description: `Type "${searchQuery}" in search box and submit`, strategy: "direct" },
+          { description: `Take screenshot of results`, strategy: "direct" },
+          { description: `Report findings`, strategy: "direct" },
+        ],
+      };
+    }
+
     const stepsByCategory: Record<TaskCategory, Array<{ description: string; strategy: string }>> = {
       simple: [{ description: "Execute task directly", strategy: "direct" }],
       complex: [
@@ -552,6 +647,23 @@ export class AgentLoop {
 
     const planSummary = plan.steps.map((s, i) => `${i + 1}. ${s.description}`).join("\n");
     parts.push(`Plan:\n${planSummary}`);
+
+    // Browser-specific instructions
+    if (category === "browser") {
+      parts.push(`
+## IMPORTANT: Browser Task Completion
+
+For browser tasks, you MUST continue executing tools until the task is fully complete:
+1. Navigate to the target website
+2. Take snapshots to see what's available
+3. Type/click to interact with elements
+4. Take screenshots to capture results
+5. Call browser_end with a summary when you are COMPLETE
+
+DO NOT STOP after one action - keep going until the task is done!
+Call browser_end when you have finished all browser actions and are ready to report results.
+`);
+    }
 
     if (this.memory) {
       const memoryContext = this.memory.context(task);
@@ -595,6 +707,30 @@ export class AgentLoop {
     }
 
     return { success: true };
+  }
+
+  /**
+   * Fire-and-forget screenshot capture so the frontend browser panel
+   * stays in sync with the agent's actual browser state.
+   */
+  private captureBrowserState(): void {
+    (async () => {
+      try {
+        const screenshot = await takeBrowserScreenshot();
+        if (screenshot && screenshot.length > 100) {
+          let url = 'Unknown';
+          try {
+            const pages = (this.browserSession as any)?.context?.pages?.();
+            if (pages && pages.length > 0) {
+              url = pages[0].url();
+            }
+          } catch {}
+          setLatestScreenshot(screenshot, url);
+        }
+      } catch {
+        // Silently ignore — screenshot is best-effort
+      }
+    })();
   }
 
   private async runPostTask(task: string, result: string, success: boolean, category: TaskCategory): Promise<void> {
