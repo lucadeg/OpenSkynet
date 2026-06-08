@@ -2,7 +2,6 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { getConfig } from "../core/config";
 import logger from "../core/logging";
-import { buildStealthLaunchArgs } from "./stealth";
 
 type Browser = import("playwright").Browser;
 type BrowserContext = import("playwright").BrowserContext;
@@ -57,29 +56,54 @@ export class BrowserSession {
   async start(): Promise<void> {
     if (this._started) return;
 
-    const { chromium } = await import("playwright");
-
     mkdirSync(this.userDataDir, { recursive: true });
 
-    const launchArgs = this.stealth
-      ? buildStealthLaunchArgs({
-          headless: this.headless,
-          proxy: this.proxy,
-        })
-      : ["--no-first-run", "--no-default-browser-check"];
+    try {
+      const { launchPersistentContext } = await import("cloakbrowser");
 
-    if (this.headless && !this.stealth) {
-      launchArgs.push("--headless=new");
+      const cloakOpts: any = {
+        userDataDir: this.userDataDir,
+        headless: this.headless,
+        humanize: true,
+        humanPreset: "default",
+        stealthArgs: true,
+        viewport: { width: 1280, height: 720 },
+        args: [],
+      };
+
+      if (this.proxy) {
+        cloakOpts.proxy = this.proxy;
+      }
+
+      if (this.fingerprintSeed) {
+        cloakOpts.args.push(`--fingerprint=${this.fingerprintSeed}`);
+      }
+
+      this._context = await launchPersistentContext(cloakOpts);
+      this._browser = (this._context as any).browser?.() ?? null;
+
+      this._started = true;
+      logger.info("browser session started (cloakbrowser stealth, humanize=true)");
+      return;
+    } catch (cloakErr) {
+      logger.warn({ err: (cloakErr as Error).message }, "cloakbrowser_fallback_to_playwright");
     }
+
+    const { chromium } = await import("playwright");
+    const launchArgs = [
+      "--disable-blink-features=AutomationControlled",
+      "--no-first-run",
+      "--no-default-browser-check",
+    ];
+    if (this.headless) launchArgs.push("--headless=new");
+    if (this.proxy) launchArgs.push(`--proxy-server=${this.proxy}`);
 
     this._context = await chromium.launchPersistentContext(this.userDataDir, {
       headless: this.headless,
       args: launchArgs,
       viewport: { width: 1280, height: 720 },
       ignoreDefaultArgs: ["--enable-automation"],
-      userAgent: undefined,
     });
-
     this._browser = this._context.browser();
 
     if (this.stealth) {
@@ -92,13 +116,9 @@ export class BrowserSession {
     }
 
     this._started = true;
-    logger.info("browser session started (stealth=%s)", this.stealth);
+    logger.info("browser session started (playwright fallback, stealth=%s)", this.stealth);
   }
 
-  /**
-   * Connect Playwright to an existing Electron webview via CDP.
-   * The shared browser — agent and user see the same page.
-   */
   async connectViaCDP(wsUrl: string): Promise<void> {
     if (this._started) {
       await this.stop();

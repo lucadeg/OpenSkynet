@@ -8,7 +8,7 @@ import { ContextCompressor } from "../memory/compressor";
 import { ProgressTracker } from "../memory/progress";
 import { AuditLog, SharedScratchpad, checkBudget, type Budget } from "../monitoring/guardrails";
 import { loadSoul } from "../prompts/soul";
-import { takeBrowserScreenshot } from "../tools/browser-tools";
+import { takeBrowserScreenshot, setOnInterventionRequested } from "../tools/browser-tools";
 import { setLatestScreenshot } from "../../api/routes/browser";
 import logger from "../../core/logging";
 import { getConfig } from "../../core/config";
@@ -226,7 +226,10 @@ export class AgentLoop {
       this.interrupt.reset();
       this.progress = new ProgressTracker();
 
-      // Emit initial progress event
+      setOnInterventionRequested((message, id) => {
+        this.streamEmitter.emitIntervention(message, id);
+      });
+
       this.streamEmitter.emitProgress(0, this.maxIterations, "starting");
 
       if (this.memory) {

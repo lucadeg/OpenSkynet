@@ -23,6 +23,8 @@ interface ChatState {
   updateMessage: (conversationId: string, messageId: string, updates: Partial<Message>) => void;
   appendToMessage: (conversationId: string, messageId: string, delta: string) => void;
   setMessageStatus: (conversationId: string, messageId: string, status: MessageStatus) => void;
+  addToolCall: (conversationId: string, messageId: string, toolCall: import('@/types').ToolCallRecord) => void;
+  updateToolCall: (conversationId: string, messageId: string, toolCallId: string, updates: Partial<import('@/types').ToolCallRecord>) => void;
 
   // Utility
   getConversation: (id: string) => Conversation | undefined;
@@ -151,6 +153,49 @@ export const useChatStore = create<ChatState>()(
 
       setMessageStatus: (conversationId, messageId, status) => {
         get().updateMessage(conversationId, messageId, { status });
+      },
+
+      addToolCall: (conversationId, messageId, toolCall) => {
+        set((state) => ({
+          conversations: state.conversations.map((c) => {
+            if (c.id === conversationId) {
+              return {
+                ...c,
+                messages: c.messages.map((m) =>
+                  m.id === messageId
+                    ? { ...m, toolCalls: [...(m.toolCalls || []), toolCall] }
+                    : m
+                ),
+              };
+            }
+            return c;
+          }),
+          version: state.version + 1,
+        }));
+      },
+
+      updateToolCall: (conversationId, messageId, toolCallId, updates) => {
+        set((state) => ({
+          conversations: state.conversations.map((c) => {
+            if (c.id === conversationId) {
+              return {
+                ...c,
+                messages: c.messages.map((m) =>
+                  m.id === messageId
+                    ? {
+                        ...m,
+                        toolCalls: (m.toolCalls || []).map((tc) =>
+                          tc.id === toolCallId ? { ...tc, ...updates } : tc
+                        ),
+                      }
+                    : m
+                ),
+              };
+            }
+            return c;
+          }),
+          version: state.version + 1,
+        }));
       },
 
       getConversation: (id) => {

@@ -5,6 +5,7 @@ export interface ChatStreamOptions {
   onProgress?: (progress: { phase: string; message: string; detail?: string }) => void;
   onDone?: (result?: any) => void;
   onError?: (error: string) => void;
+  onIntervention?: (message: string, id: number) => void;
 }
 
 interface RunTaskParams {
@@ -52,6 +53,9 @@ class ChatService {
               break;
             case 'error':
               options.onError?.(data.error || 'Unknown error');
+              break;
+            case 'intervention':
+              options.onIntervention?.(data.message, data.id);
               break;
           }
         },

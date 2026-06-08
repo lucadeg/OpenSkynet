@@ -98,11 +98,28 @@ export function createAgentRoutes(deps: {
             case 'error':
               enqueue("error", { error: streamEvent.error });
               break;
+            case 'intervention':
+              enqueue("intervention", { message: streamEvent.message, id: streamEvent.id });
+              break;
           }
         });
 
         try {
           const result = await deps.agentLoop.run(body.task, body.mode);
+
+          // Save session to database after agent completes
+          try {
+            const { saveSession } = await import("../../memory/sessions.js");
+            await saveSession({
+              task: body.task,
+              steps: result.steps,
+              result: result.success ? result.result : undefined,
+            });
+            console.log('[API Agent] Session saved to database');
+          } catch (saveErr) {
+            // Don't fail the request if session save fails
+            console.warn('[API Agent] Failed to save session:', saveErr);
+          }
 
           enqueue("done", {
             success: result.success,

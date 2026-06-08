@@ -1,16 +1,17 @@
-import { useState, useRef, useEffect } from 'react';
-import { Monitor, Paperclip, Send, AlertTriangle, X, ChevronDown, ChevronRight } from 'lucide-react';
+import { useState, useRef, useEffect, useCallback } from 'react';
+import { Monitor, Paperclip, Send, AlertCircle, Upload, Bot, Square, ChevronDown } from 'lucide-react';
 import { useRPCConnection } from '@/hooks/useRPCConnection';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
-import rehypeHighlight from 'rehype-highlight';
 import { useChatStore } from '@/stores/useChatStore';
 import { useSandboxStore } from '@/stores/useSandboxStore';
 import { useAppStore } from '@/stores/useAppStore';
 import { getChatService } from '@/services/chatService';
 import { FileUploadZone } from '@/elements/form/FileUploadZone';
 import { StreamingIndicator } from '@/components/agent/StreamingIndicator';
+import { MessageBubble } from '@/components/agent/MessageBubble';
+import { SuggestionChip } from '@/components/ui/SuggestionChip';
+import { FileChip } from '@/components/ui/FileChip';
 import { thinkTagParser } from '@/utils/thinkTagParser';
+import { cn } from '@/lib/utils';
 import type { Message } from '@/types';
 
 interface AttachedFile {
@@ -37,7 +38,6 @@ export function AgentPage() {
       fetch('http://localhost:3001/api/health')
         .then(res => {
           if (res.ok) {
-            // Update store to show connected
             const setAgentStatus = useAppStore.getState().setAgentStatus;
             setAgentStatus({ rpcConnected: true });
           }
@@ -65,6 +65,7 @@ export function AgentPage() {
 
   // Tool call history for better visibility
   const [toolCallHistory, setToolCallHistory] = useState<Array<{ action: string; detail: string; status: 'pending' | 'success' | 'error', timestamp: number }>>([]);
+  const [intervention, setIntervention] = useState<{ active: boolean; message: string; id: number } | null>(null);
 
   // Use messages directly from store - no local state duplication
   const activeConversation = conversations.find(c => c.id === conversationId);
@@ -72,11 +73,9 @@ export function AgentPage() {
 
   // Initialize conversation on mount
   useEffect(() => {
-    // Only set if not already set
     if (!conversationId) {
       const existingConvos = conversations;
       if (existingConvos.length > 0) {
-        // Use the most recently updated conversation
         const sortedConvos = [...existingConvos].sort((a, b) => {
           const aTime = new Date(b.updatedAt || b.createdAt || 0).getTime();
           const bTime = new Date(a.updatedAt || a.createdAt || 0).getTime();
@@ -86,7 +85,6 @@ export function AgentPage() {
         setConversationId(latestConv.id);
         selectConversation(latestConv.id);
       } else {
-        // Only create new if no conversations exist
         const newConv = createConversation('New Chat');
         setConversationId(newConv.id);
         selectConversation(newConv.id);
@@ -94,19 +92,33 @@ export function AgentPage() {
     }
   }, []);
 
-  // Auto-scroll when messages change
-  useEffect(() => {
-    if (scrollRef.current && messages.length > 0) {
+  const [showScrollButton, setShowScrollButton] = useState(false);
+
+  const scrollToBottom = useCallback(() => {
+    if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-  }, [messages.length]);
+  }, []);
+
+  const handleScroll = useCallback(() => {
+    if (!scrollRef.current) return;
+    const { scrollTop, scrollHeight, clientHeight } = scrollRef.current;
+    setShowScrollButton(scrollHeight - scrollTop - clientHeight > 80);
+  }, []);
+
+  useEffect(() => {
+    if (scrollRef.current && messages.length > 0) {
+      if (!showScrollButton) {
+        scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+      }
+    }
+  }, [messages.length, messages.reduce((s, m) => s + m.content.length, 0)]);
 
   const handleSend = async () => {
     const messageText = input.trim();
     if (!messageText || !conversationId || isStreaming) return;
 
     if (!agentStatus.rpcConnected) {
-      // Add user message
       const userMsg: Message = {
         id: crypto.randomUUID(),
         role: 'user',
@@ -116,7 +128,6 @@ export function AgentPage() {
       };
       addMessage(conversationId, userMsg);
 
-      // Add error message
       const errorMsg: Message = {
         id: crypto.randomUUID(),
         role: 'assistant',
@@ -133,7 +144,6 @@ export function AgentPage() {
     setInput('');
     setAttachedFiles([]);
 
-    // Add user message
     const userMsgId = crypto.randomUUID();
     const userMsg: Message = {
       id: userMsgId,
@@ -144,7 +154,6 @@ export function AgentPage() {
     };
     addMessage(conversationId, userMsg);
 
-    // Add assistant streaming message
     const assistantMsgId = crypto.randomUUID();
     const assistantMsg: Message = {
       id: assistantMsgId,
@@ -170,53 +179,55 @@ export function AgentPage() {
           else if (phase === 'thinking') setStreamingPhase('thinking');
           else if (phase === 'reflecting') setStreamingPhase('reflecting');
 
-          // Check if chunk contains cumulative content and only append the new part
           const currentMessage = useChatStore.getState().conversations
             .find(c => c.id === conversationId)
             ?.messages.find(m => m.id === assistantMsgId);
 
           if (currentMessage && currentMessage.content && delta.startsWith(currentMessage.content)) {
-            // Chunk contains previous content, only append the new part
             const newContent = delta.substring(currentMessage.content.length);
             appendToMessage(conversationId, assistantMsgId, newContent);
           } else {
-            // Chunk is incremental or first chunk, append directly
             appendToMessage(conversationId, assistantMsgId, delta);
           }
         },
         onProgress: (progress: { phase: string; detail?: string; action?: string; url?: string; observation?: string; success?: boolean }) => {
-          // Debug logging - show full object structure
-          console.log('[AgentPage] Progress event:', JSON.stringify(progress, null, 2));
-
-          // Update current action and detail for StreamingIndicator
           setCurrentAction(progress.action);
           setCurrentDetail(progress.detail || progress.observation);
 
-          // Track tool calls in history
           if (progress.action && progress.phase === 'executing') {
-            const existingToolCall = toolCallHistory.find(
-              tc => tc.action === progress.action && Math.abs(Date.now() - tc.timestamp) < 5000
-            );
-
-            if (!existingToolCall) {
-              // Add new tool call to history
+            if (progress.success === undefined) {
+              const toolCallId = `tc-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+              useChatStore.getState().addToolCall(conversationId, assistantMsgId, {
+                id: toolCallId,
+                action: progress.action,
+                detail: progress.detail || '',
+                status: 'pending',
+                startedAt: Date.now(),
+              });
               setToolCallHistory(prev => [...prev, {
-                action: progress.action || 'unknown',
+                action: progress.action,
                 detail: progress.detail || '',
                 status: 'pending' as const,
-                timestamp: Date.now()
-              }]);
-            }
+                timestamp: Date.now(),
+                _id: toolCallId,
+              } as any]);
+            } else {
+              const lastPending = useChatStore.getState().conversations
+                .find(c => c.id === conversationId)
+                ?.messages.find(m => m.id === assistantMsgId)
+                ?.toolCalls?.find(tc => tc.action === progress.action && tc.status === 'pending');
 
-            // When tool completes successfully, update its status
-            if (progress.success !== undefined) {
+              if (lastPending) {
+                useChatStore.getState().updateToolCall(conversationId, assistantMsgId, lastPending.id, {
+                  status: progress.success ? 'success' : 'error',
+                  observation: progress.observation || '',
+                  completedAt: Date.now(),
+                });
+              }
+
               setToolCallHistory(prev => prev.map(tc => {
                 if (tc.action === progress.action && tc.status === 'pending') {
-                  return {
-                    ...tc,
-                    status: progress.success ? 'success' : 'error',
-                    detail: progress.observation || progress.detail || ''
-                  };
+                  return { ...tc, status: progress.success ? 'success' : 'error', detail: progress.observation || progress.detail || '' };
                 }
                 return tc;
               }));
@@ -228,9 +239,6 @@ export function AgentPage() {
             const action = progress.action?.toLowerCase() || '';
             const detail = progress.detail?.toLowerCase() || '';
 
-            console.log('[AgentPage] Checking browser action:', { action, detail });
-
-            // Check if this is a browser-related action
             const isBrowserAction =
               action.includes('navigate') ||
               action.includes('click') ||
@@ -242,24 +250,16 @@ export function AgentPage() {
               detail.includes('browser') ||
               progress.url;
 
-            console.log('[AgentPage] Is browser action?', isBrowserAction);
-
             if (isBrowserAction) {
-              // Open browser panel if not already open
               const isOpen = useSandboxStore.getState().isOpen;
-              console.log('[AgentPage] Browser panel isOpen:', isOpen);
               if (!isOpen) {
-                console.log('[AgentPage] Opening browser panel...');
                 setOpenSandbox(true);
               }
 
-              // Parse URL from browser_navigate detail and update tab
               if (action === 'browser_navigate' && progress.detail) {
                 try {
                   const detailObj = JSON.parse(progress.detail);
                   if (detailObj.url) {
-                    console.log('[AgentPage] Server navigated to:', detailObj.url);
-                    // Import BrowserService and notify of server navigation
                     import('@/services/BrowserService').then(({ browserService }) => {
                       browserService.serverNavigated(detailObj.url);
                     });
@@ -284,14 +284,11 @@ export function AgentPage() {
           }
         },
         onDone: (_result) => {
-          // Get the current message
           const currentMessage = useChatStore.getState().conversations
             .find(c => c.id === conversationId)
             ?.messages.find(m => m.id === assistantMsgId);
 
           if (currentMessage && !currentMessage.content && _result?.result) {
-            // No chunks were received, use the result directly
-            // Parse the result to extract thinking and visible content
             const parsed = thinkTagParser.parse(_result.result);
             updateMessage(conversationId, assistantMsgId, {
               content: parsed.visible,
@@ -299,7 +296,6 @@ export function AgentPage() {
               status: 'done',
             });
           } else if (currentMessage && currentMessage.content) {
-            // Chunks were received, parse the accumulated content to extract thinking
             const parsed = thinkTagParser.parse(currentMessage.content);
             updateMessage(conversationId, assistantMsgId, {
               content: parsed.visible,
@@ -307,7 +303,6 @@ export function AgentPage() {
               status: 'done',
             });
           } else {
-            // Mark as done even if no content
             updateMessage(conversationId, assistantMsgId, {
               status: 'done',
             });
@@ -319,6 +314,12 @@ export function AgentPage() {
         onError: (error: string) => {
           console.warn('[AgentPage] Non-fatal agent error (agent may recover):', error);
         },
+        onIntervention: (message: string, id: number) => {
+          setIntervention({ active: true, message, id });
+          try {
+            new Notification('Agent Needs Your Help', { body: message, silent: false });
+          } catch {}
+        },
       },
       { model, provider }
       );
@@ -329,12 +330,20 @@ export function AgentPage() {
     }
   };
 
+  const handleStop = async () => {
+    try {
+      await getChatService().stopCurrentTask();
+    } catch {}
+    setIsStreaming(false);
+    setStreamingPhase('thinking');
+    setRetryProgress(null);
+  };
+
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       handleSend();
     }
-    // Shift+Enter allows default behavior (new line)
   };
 
   const handleDragOver = (e: React.DragEvent) => {
@@ -364,125 +373,91 @@ export function AgentPage() {
 
   return (
     <div
-      className="flex flex-col h-full bg-white dark:bg-black"
+      className="flex flex-col h-full bg-background"
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
     >
-      {/* Connection Warning */}
+      {/* Connection Warning (Subtle) */}
       {!agentStatus.rpcConnected && (
-        <div className="flex items-center justify-between px-4 py-2 bg-red-500 text-white">
+        <div className="flex items-center justify-between px-4 py-2.5 bg-warning/10 border-b border-warning/20 text-warning-foreground">
           <div className="flex items-center gap-2 text-sm">
-            <AlertTriangle className="w-4 h-4" />
-            <span>Backend disconnected. Run: bun run backend</span>
+            <div className="w-2 h-2 rounded-full bg-warning animate-pulse" />
+            <span className="font-medium">Disconnected</span>
+            <span className="text-muted-foreground">— Backend not responding</span>
           </div>
-          <button onClick={() => window.location.reload()} className="text-sm underline">
-            Retry
+          <button
+            onClick={() => window.location.reload()}
+            className="text-xs underline hover:text-foreground transition-colors"
+          >
+            Reconnect
           </button>
         </div>
       )}
 
       {/* Messages Area */}
-      <div className="flex-1 overflow-y-auto" ref={scrollRef}>
+      <div className="flex-1 overflow-y-auto relative" ref={scrollRef} onScroll={handleScroll}>
+        {/* Scroll to bottom button */}
+        {showScrollButton && (
+          <button
+            onClick={scrollToBottom}
+            className="fixed bottom-32 right-8 z-40 w-8 h-8 rounded-full bg-card border border-border shadow-lg flex items-center justify-center hover:bg-muted transition-colors"
+          >
+            <ChevronDown className="w-4 h-4 text-muted-foreground" />
+          </button>
+        )}
         <div className="max-w-4xl mx-auto">
           {!hasMessages ? (
-            <div className="h-96 flex items-center justify-center">
-              <div className="text-center">
-                <Monitor className="w-16 h-16 mx-auto mb-4 text-gray-400" />
-                <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-2">New chat</h1>
-                <p className="text-gray-500 dark:text-gray-400">Send a message to start</p>
+            <div className="h-96 flex items-center justify-center p-12">
+              <div className="text-center max-w-md">
+                <div className="w-16 h-16 mx-auto mb-4 rounded-2xl bg-muted/50 flex items-center justify-center">
+                  <Bot className="w-8 h-8 text-muted-foreground" />
+                </div>
+                <h2 className="text-xl font-semibold text-foreground mb-2">
+                  Start a conversation
+                </h2>
+                <p className="text-sm text-muted-foreground mb-6">
+                  Ask questions, request tasks, or give instructions
+                </p>
+                <div className="flex flex-wrap justify-center gap-2">
+                  <SuggestionChip label="Analyze a file" />
+                  <SuggestionChip label="Browse the web" />
+                  <SuggestionChip label="Write code" />
+                </div>
               </div>
             </div>
           ) : (
-            <div className="divide-y divide-gray-200 dark:divide-gray-800">
+            <div className="divide-y divide-border/50">
               {messages.map((message) => {
-                const isUser = message.role === 'user';
-                
-                // Parse thinking content from message (works during streaming too)
                 const parsedThinking = thinkTagParser.parse(message.content);
                 const displayContent = parsedThinking.visible;
                 const displayThinking = message.thinking || parsedThinking.thinking;
-                
-                // For streaming, only show partial think content
-                const effectiveThinking = message.status === 'streaming' 
+                const effectiveThinking = message.status === 'streaming'
                   ? (parsedThinking.thinking || null)
                   : displayThinking;
 
                 return (
                   <div key={message.id} className="p-8">
-                    <div className="mb-3">
-                      <span className={`text-xs font-bold uppercase tracking-widest ${
-                        isUser ? 'text-gray-400' : 'text-blue-500'
-                      }`}>
-                        {isUser ? 'You' : 'Assistant'}
-                      </span>
-                    </div>
-
-                    <div className="text-gray-900 dark:text-white leading-relaxed">
-                      {/* Thinking section - collapsible */}
-                      {effectiveThinking && (
-                        <div className="mb-4 border border-amber-200 dark:border-amber-800 rounded-lg overflow-hidden">
-                          <button
-                            onClick={() => {
-                              setExpandedThinkingMessages(prev => {
-                                const newSet = new Set(prev);
-                                if (newSet.has(message.id)) {
-                                  newSet.delete(message.id);
-                                } else {
-                                  newSet.add(message.id);
-                                }
-                                return newSet;
-                              });
-                            }}
-                            className="w-full px-4 py-2 flex items-center gap-2 text-sm text-amber-700 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950 transition-colors"
-                          >
-                            {expandedThinkingMessages.has(message.id) ? (
-                              <ChevronDown className="w-4 h-4" />
-                            ) : (
-                              <ChevronRight className="w-4 h-4" />
-                            )}
-                            <span className="font-medium">Reasoning</span>
-                            <span className="text-xs text-amber-500">
-                              ({effectiveThinking.length} chars)
-                            </span>
-                          </button>
-                          {expandedThinkingMessages.has(message.id) && (
-                            <div className="px-4 py-3 bg-amber-50 dark:bg-amber-950 border-t border-amber-200 dark:border-amber-800">
-                              <pre className="whitespace-pre-wrap text-sm text-amber-800 dark:text-amber-300 font-mono">
-                                {effectiveThinking}
-                              </pre>
-                            </div>
-                          )}
-                        </div>
-                      )}
-
-                      {/* Main content */}
-                      {displayContent ? (
-                        <div className="prose prose-gray dark:prose-invert max-w-none">
-                          <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>
-                            {displayContent}
-                          </ReactMarkdown>
-                        </div>
-                      ) : message.status === 'streaming' ? (
-                        <div className="flex items-center gap-2">
-                          <div className="w-2 h-2 bg-blue-500 rounded-full animate-pulse" />
-                          <span className="text-sm text-gray-400">Thinking...</span>
-                        </div>
-                      ) : message.status === 'error' && message.content ? (
-                        <div className="mt-2 text-sm text-red-500">
-                          {message.content}
-                        </div>
-                      ) : null}
-                    </div>
-
-                    {displayContent && (
-                      <button
-                        onClick={() => navigator.clipboard.writeText(displayContent)}
-                        className="mt-3 text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 uppercase tracking-wide"
-                      >
-                        Copy
-                      </button>
-                    )}
+                    <MessageBubble
+                      message={{
+                        ...message,
+                        content: displayContent || message.content,
+                        thinking: effectiveThinking || undefined
+                      }}
+                      isStreaming={message.status === 'streaming'}
+                      onToggleThinking={displayThinking ? () => {
+                        setExpandedThinkingMessages(prev => {
+                          const newSet = new Set(prev);
+                          if (newSet.has(message.id)) {
+                            newSet.delete(message.id);
+                          } else {
+                            newSet.add(message.id);
+                          }
+                          return newSet;
+                        });
+                      } : undefined}
+                      isThinkingExpanded={expandedThinkingMessages.has(message.id)}
+                    />
                   </div>
                 );
               })}
@@ -491,12 +466,19 @@ export function AgentPage() {
         </div>
       </div>
 
-      {/* Drag Overlay */}
+      {/* Drag Overlay (Elegant) */}
       {isDragOver && (
-        <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center">
-          <div className="bg-white dark:bg-gray-900 p-8">
-            <Paperclip className="w-12 h-12 mb-4" />
-            <p className="text-sm">Drop files to attach</p>
+        <div className="fixed inset-0 z-50 bg-background/80 backdrop-blur-sm flex items-center justify-center">
+          <div className="p-8 rounded-2xl border-2 border-dashed border-border bg-card shadow-xl text-center animate-in fade-in zoom-in duration-200">
+            <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-primary/10 flex items-center justify-center">
+              <Upload className="w-8 h-8 text-primary" />
+            </div>
+            <p className="text-sm font-medium text-foreground">
+              Drop to attach files
+            </p>
+            <p className="text-xs text-muted-foreground mt-1">
+              PDF, images, documents supported
+            </p>
           </div>
         </div>
       )}
@@ -504,23 +486,53 @@ export function AgentPage() {
       {/* Streaming Indicator */}
       {isStreaming && <StreamingIndicator phase={streamingPhase} retryProgress={retryProgress} action={currentAction} detail={currentDetail} toolCallHistory={toolCallHistory} />}
 
+      {/* Intervention Banner */}
+      {intervention?.active && (
+        <div className="mx-4 my-2 p-4 rounded-xl bg-gradient-to-r from-amber-50 to-orange-50 dark:from-amber-950 dark:to-orange-950 border-2 border-amber-400 dark:border-amber-600 shadow-lg animate-in slide-in-from-bottom-2 duration-300">
+          <div className="flex items-start gap-3">
+            <div className="w-10 h-10 rounded-full bg-amber-400 dark:bg-amber-600 flex items-center justify-center shrink-0 animate-pulse">
+              <AlertCircle className="w-5 h-5 text-white" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <h3 className="text-sm font-bold text-amber-900 dark:text-amber-100 mb-1">Agent Needs Your Help</h3>
+              <p className="text-sm text-amber-800 dark:text-amber-200 leading-relaxed">{intervention.message}</p>
+              <button
+                onClick={async () => {
+                  try {
+                    await fetch(`${import.meta.env?.VITE_API_BASE || 'http://localhost:3001'}/api/browser/intervention-done`, {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ message: 'User completed the task' }),
+                    });
+                  } catch {}
+                  setIntervention(null);
+                }}
+                className="mt-3 px-5 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-sm font-semibold shadow-md hover:shadow-lg transition-all"
+              >
+                Done
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Input Area */}
-      <div className="border-t border-gray-200 dark:border-gray-800 bg-white dark:bg-black">
-        <div className="max-w-3xl mx-auto px-4 py-3">
+      <div className="border-t border-border/50 bg-card px-4 py-4">
+        <div className="max-w-3xl mx-auto space-y-3">
+          {/* Attachments */}
           {attachedFiles.length > 0 && (
-            <div className="flex flex-wrap gap-2 mb-3">
+            <div className="flex flex-wrap gap-2">
               {attachedFiles.map(file => (
-                <div key={file.id} className="flex items-center gap-2 px-2 py-1 bg-gray-100 dark:bg-gray-800 text-xs">
-                  <Paperclip className="w-3.5 h-3.5 text-gray-500" />
-                  <span className="max-w-[120px] truncate">{file.name}</span>
-                  <button onClick={() => setAttachedFiles(prev => prev.filter(f => f.id !== file.id))} className="text-gray-400 hover:text-gray-600">
-                    <X className="w-3 h-3" />
-                  </button>
-                </div>
+                <FileChip
+                  key={file.id}
+                  {...file}
+                  onRemove={(id) => setAttachedFiles(prev => prev.filter(f => f.id !== id))}
+                />
               ))}
             </div>
           )}
 
+          {/* File Upload Zone */}
           {showFileUpload && (
             <div className="relative mb-3">
               <FileUploadZone
@@ -531,59 +543,85 @@ export function AgentPage() {
                 acceptedTypes={['.pdf', '.ppt', '.pptx', '.doc', '.docx', '.txt', '.png', '.jpg', '.jpeg']}
                 maxSize={100}
               />
-              <button onClick={() => setShowFileUpload(false)} className="absolute top-2 right-2 p-1">
-                <X className="w-3 h-3" />
+              <button
+                onClick={() => setShowFileUpload(false)}
+                className="absolute top-2 right-2 p-1 rounded hover:bg-muted transition-colors"
+              >
+                <AlertCircle className="w-4 h-4 text-muted-foreground" />
               </button>
             </div>
           )}
 
-          <div className="flex items-center gap-2">
+          {/* Input */}
+          <div className={cn(
+            'flex items-end gap-3 p-1.5 rounded-xl border-2 bg-background transition-all duration-200',
+            'focus-within:border-primary focus-within:ring-4 focus-within:ring-primary/10',
+            isDragOver ? 'border-primary border-dashed' : 'border-border'
+          )}>
+            {/* Attachment button */}
             <button
               onClick={() => setShowFileUpload(!showFileUpload)}
               disabled={isStreaming}
-              className="p-2 hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-50 text-gray-500"
+              className="p-2 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted disabled:opacity-50 transition-colors duration-150"
               title="Attach files"
             >
-              <Paperclip className="w-4 h-4" />
+              <Paperclip className="w-5 h-5" />
             </button>
 
-            <div className="flex-1 relative">
-              <textarea
-                ref={textareaRef}
-                placeholder="Message..."
-                value={input}
-                onChange={e => setInput(e.target.value)}
-                onKeyDown={handleKeyDown}
+            {/* Textarea */}
+            <textarea
+              ref={textareaRef}
+              placeholder="Message OpenSkynet..."
+              value={input}
+              onChange={e => setInput(e.target.value)}
+              onKeyDown={handleKeyDown}
+              disabled={isStreaming}
+              rows={1}
+              className="flex-1 py-2.5 px-1 bg-transparent border-none outline-none text-sm text-foreground placeholder:text-muted-foreground/50 resize-none overflow-hidden textarea-autoresize disabled:opacity-50"
+            />
+
+            {/* Action buttons */}
+            <div className="flex items-center gap-1 pb-0.5">
+              <button
+                onClick={() => setOpenSandbox(true)}
                 disabled={isStreaming}
-                className="w-full min-h-[44px] max-h-32 resize-y rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-black px-3 py-2.5 pr-20 text-sm text-gray-900 dark:text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-black dark:focus:ring-white disabled:opacity-50"
-                rows={1}
-              />
-              <div className="absolute right-2 bottom-2 flex items-center gap-0.5">
-                <button
-                  onClick={() => {
-                    setOpenSandbox(true);
-                  }}
-                  disabled={isStreaming}
-                  className="p-1.5 hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-50 text-gray-500"
-                  title="Open browser"
-                >
-                  <Monitor className="w-3.5 h-3.5" />
-                </button>
-                <button
-                  onClick={handleSend}
-                  disabled={!input.trim() || isStreaming}
-                  className="p-1.5 bg-black dark:bg-white text-white dark:text-black hover:opacity-80 disabled:opacity-30"
-                  title="Send"
-                >
-                  {isStreaming ? '...' : <Send className="w-3.5 h-3.5" />}
-                </button>
-              </div>
+                className="p-2 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted disabled:opacity-50 transition-colors duration-150"
+                title="Open browser"
+              >
+                <Monitor className="w-4 h-4" />
+              </button>
+
+              <button
+                onClick={isStreaming ? handleStop : handleSend}
+                disabled={!isStreaming && !input.trim()}
+                className={cn(
+                  'p-2 rounded-lg transition-all duration-150 shadow-sm',
+                  isStreaming
+                    ? 'bg-red-500 text-white hover:bg-red-600'
+                    : 'bg-primary text-primary-foreground hover:opacity-90',
+                  'disabled:opacity-30 disabled:hover:opacity-30'
+                )}
+                title={isStreaming ? 'Stop' : 'Send (⌘↵)'}
+              >
+                {isStreaming ? (
+                  <Square className="w-4 h-4" />
+                ) : (
+                  <Send className="w-4 h-4" />
+                )}
+              </button>
             </div>
           </div>
 
-          <div className="flex items-center justify-between mt-2 text-xs text-gray-400">
-            <span>Shift + Enter for new line</span>
-            {provider && model && <span>{provider} • {model}</span>}
+          {/* Footer */}
+          <div className="flex items-center justify-between text-[11px] text-muted-foreground">
+            <span>Press Shift + Enter for new line</span>
+            {provider && model && (
+              <span className="flex items-center gap-1.5">
+                <span className="font-medium">{provider}</span>
+                <span className="text-muted-foreground/50">•</span>
+                <span>{model}</span>
+              </span>
+            )}
           </div>
         </div>
       </div>

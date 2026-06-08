@@ -7,9 +7,14 @@ import { setLatestScreenshot } from '../../api/routes/browser.js';
 
 let browserController: BrowserController | null = null;
 let projectManager: ProjectManager | null = null;
+let onInterventionRequested: ((message: string, id: number) => void) | null = null;
 
 let pendingInterventionId = 0;
 let interventionPromise: { resolve: (v: string) => void; message: string; id: number } | null = null;
+
+export function setOnInterventionRequested(cb: (message: string, id: number) => void): void {
+  onInterventionRequested = cb;
+}
 
 export function hasPendingIntervention(): boolean {
   return interventionPromise !== null;
@@ -343,6 +348,7 @@ export function registerBrowserTools(toolBus: ToolBus, controller?: BrowserContr
           try {
             const userResp = await new Promise<string>((resolve) => {
               interventionPromise = { resolve, message: msg, id: iid };
+              onInterventionRequested?.(msg, iid);
               setTimeout(() => { if (interventionPromise?.id === iid) resolve('timeout'); }, 120000);
             });
             result = userResp === 'timeout'

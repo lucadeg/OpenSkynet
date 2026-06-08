@@ -17,7 +17,8 @@ export type StreamEventType =
   | 'thinking'
   | 'content'
   | 'progress'
-  | 'error';
+  | 'error'
+  | 'intervention';
 
 /**
  * Base interface for all streaming events
@@ -86,16 +87,20 @@ export interface ErrorEvent extends StreamEvent {
   recoverable: boolean;
 }
 
-/**
- * Union type of all possible events
- */
+export interface InterventionEvent extends StreamEvent {
+  type: 'intervention';
+  message: string;
+  id: number;
+}
+
 export type AgentStreamEvent =
   | StepStartEvent
   | StepCompleteEvent
   | ThinkingEvent
   | ContentEvent
   | ProgressEvent
-  | ErrorEvent;
+  | ErrorEvent
+  | InterventionEvent;
 
 /**
  * Listener for streaming events
@@ -204,6 +209,15 @@ export class StreamEmitter {
       timestamp: Date.now(),
       error,
       recoverable,
+    });
+  }
+
+  emitIntervention(message: string, id: number): void {
+    this.emit({
+      type: 'intervention',
+      timestamp: Date.now(),
+      message,
+      id,
     });
   }
 
@@ -324,5 +338,12 @@ export function streamEventToNotification(event: AgentStreamEvent): Record<strin
         error: event.error,
         recoverable: event.recoverable,
       };
+    case 'intervention':
+      return {
+        message: event.message,
+        id: event.id,
+      };
+    default:
+      return {};
   }
 }
