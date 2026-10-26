@@ -3,17 +3,28 @@
  * Comprehensive test coverage for useBrowserState hook
  */
 
-import { describe, it, expect, , beforeEach, afterEach } from '@jest/globals';
+import { describe, it, expect,  beforeEach, afterEach } from '@jest/globals';
 import { renderHook, act, waitFor } from '@testing-library/react';
-import { useBrowserState } from '@/hooks/agent/useBrowserState';
+import { useBrowserState } from '@/hooks/browser/useBrowserState';
 import { browserService } from '@/services/BrowserService';
 
 // Mock browserService
+const mockCallbacks: Record<string, ((data: any) => void)[]> = {};
+
 jest.mock('@/services/BrowserService', () => ({
   browserService: {
-    on: jest.fn(),
-    off: jest.fn(),
-    najest.ate: jest.fn(),
+    on: jest.fn((event: string, callback: (data: any) => void) => {
+      if (!mockCallbacks[event]) {
+        mockCallbacks[event] = [];
+      }
+      mockCallbacks[event].push(callback);
+    }),
+    off: jest.fn((event: string, callback: (data: any) => void) => {
+      if (mockCallbacks[event]) {
+        mockCallbacks[event] = mockCallbacks[event].filter(cb => cb !== callback);
+      }
+    }),
+    navigate: jest.fn(),
     reload: jest.fn(),
     goBack: jest.fn(),
     goForward: jest.fn(),
@@ -23,6 +34,10 @@ jest.mock('@/services/BrowserService', () => ({
 describe('useBrowserState Hook', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    // Clear all stored callbacks
+    Object.keys(mockCallbacks).forEach(key => {
+      delete mockCallbacks[key];
+    });
   });
 
   afterEach(() => {
@@ -47,7 +62,7 @@ describe('useBrowserState Hook', () => {
 
     it('should initialize with example.com webjest.w src', () => {
       const { result } = renderHook(() => useBrowserState(false));
-      expect(result.current.webjest.wSrc).toBe('https://example.com');
+      expect(result.current.webviewSrc).toBe('https://example.com');
     });
 
     it('should initialize with null snapshot', () => {
@@ -90,32 +105,32 @@ describe('useBrowserState Hook', () => {
       expect(result.current.browserStatus).toBe('idle');
     });
 
-    it('should preserve webjest.wSrc when panel opens', () => {
+    it('should preserve webviewSrc when panel opens', () => {
       const { result, rerender } = renderHook(
         ({ isOpen }) => useBrowserState(isOpen),
         { initialProps: { isOpen: false } }
       );
 
-      const initialSrc = result.current.webjest.wSrc;
+      const initialSrc = result.current.webviewSrc;
 
       act(() => {
         rerender({ isOpen: true });
       });
 
-      expect(result.current.webjest.wSrc).toBe(initialSrc);
+      expect(result.current.webviewSrc).toBe(initialSrc);
     });
   });
 
-  describe('Najest.ation', () => {
-    it('should najest.ate to URL', () => {
+  describe('Navigation', () => {
+    it('should navigate to URL', () => {
       const { result } = renderHook(() => useBrowserState(true));
 
       act(() => {
-        result.current.najest.ateTo('https://example.com');
+        result.current.navigateTo('https://example.com');
       });
 
-      expect(browserService.najest.ate).toHaveBeenCalledWith('https://example.com');
-      expect(result.current.webjest.wSrc).toBe('https://example.com');
+      expect(browserService.navigate).toHaveBeenCalledWith('https://example.com');
+      expect(result.current.webviewSrc).toBe('https://example.com');
       expect(result.current.browserUrl).toBe('https://example.com');
       expect(result.current.inputUrl).toBe('https://example.com');
     });
@@ -124,41 +139,41 @@ describe('useBrowserState Hook', () => {
       const { result } = renderHook(() => useBrowserState(true));
 
       act(() => {
-        result.current.najest.ateTo('example.com');
+        result.current.navigateTo('example.com');
       });
 
-      expect(browserService.najest.ate).toHaveBeenCalledWith('https://example.com');
-      expect(result.current.webjest.wSrc).toBe('https://example.com');
+      expect(browserService.navigate).toHaveBeenCalledWith('https://example.com');
+      expect(result.current.webviewSrc).toBe('https://example.com');
     });
 
-    it('should not najest.ate to empty URL', () => {
+    it('should not navigate to empty URL', () => {
       const { result } = renderHook(() => useBrowserState(true));
 
       act(() => {
-        result.current.najest.ateTo('');
+        result.current.navigateTo('');
       });
 
-      expect(browserService.najest.ate).not.toHaveBeenCalled();
+      expect(browserService.navigate).not.toHaveBeenCalled();
     });
 
-    it('should not najest.ate to whitespace-only URL', () => {
+    it('should not navigate to whitespace-only URL', () => {
       const { result } = renderHook(() => useBrowserState(true));
 
       act(() => {
-        result.current.najest.ateTo('   ');
+        result.current.navigateTo('   ');
       });
 
-      expect(browserService.najest.ate).not.toHaveBeenCalled();
+      expect(browserService.navigate).not.toHaveBeenCalled();
     });
 
     it('should trim URL before najest.ating', () => {
       const { result } = renderHook(() => useBrowserState(true));
 
       act(() => {
-        result.current.najest.ateTo('  https://example.com  ');
+        result.current.navigateTo('  https://example.com  ');
       });
 
-      expect(browserService.najest.ate).toHaveBeenCalledWith('https://example.com');
+      expect(browserService.navigate).toHaveBeenCalledWith('https://example.com');
     });
   });
 
@@ -195,7 +210,7 @@ describe('useBrowserState Hook', () => {
   });
 
   describe('URL Input Handling', () => {
-    it('should najest.ate on Enter key', () => {
+    it('should navigate on Enter key', () => {
       const { result } = renderHook(() => useBrowserState(true));
 
       act(() => {
@@ -206,10 +221,10 @@ describe('useBrowserState Hook', () => {
         } as any);
       });
 
-      expect(browserService.najest.ate).toHaveBeenCalledWith('https://test.com');
+      expect(browserService.navigate).toHaveBeenCalledWith('https://test.com');
     });
 
-    it('should not najest.ate on other keys', () => {
+    it('should not navigate on other keys', () => {
       const { result } = renderHook(() => useBrowserState(true));
 
       act(() => {
@@ -220,7 +235,7 @@ describe('useBrowserState Hook', () => {
         } as any);
       });
 
-      expect(browserService.najest.ate).not.toHaveBeenCalled();
+      expect(browserService.navigate).not.toHaveBeenCalled();
     });
 
     it('should prevent default on Enter key', () => {
@@ -239,21 +254,21 @@ describe('useBrowserState Hook', () => {
     });
   });
 
-  describe('Browser Serjest.e Events', () => {
-    it('should register browser-najest.ate event listener', () => {
+  describe('Browser Service Events', () => {
+    it('should register browser-navigate event listener', () => {
       renderHook(() => useBrowserState(true));
 
       expect(browserService.on).toHaveBeenCalledWith(
-        'browser-najest.ate',
+        'browser-navigate',
         expect.any(Function)
       );
     });
 
-    it('should register server-najest.ate event listener', () => {
+    it('should register server-navigate event listener', () => {
       renderHook(() => useBrowserState(true));
 
       expect(browserService.on).toHaveBeenCalledWith(
-        'server-najest.ate',
+        'server-navigate',
         expect.any(Function)
       );
     });
@@ -264,54 +279,38 @@ describe('useBrowserState Hook', () => {
       unmount();
 
       expect(browserService.off).toHaveBeenCalledWith(
-        'browser-najest.ate',
+        'browser-navigate',
         expect.any(Function)
       );
       expect(browserService.off).toHaveBeenCalledWith(
-        'server-najest.ate',
+        'server-navigate',
         expect.any(Function)
       );
     });
 
-    it('should handle browser-najest.ate event', async () => {
+    it('should handle browser-navigate event', async () => {
       const { result } = renderHook(() => useBrowserState(true));
 
-      let najest.ateCallback: ((data: { url: string }) => void) | null = null;
-
-      (browserService.on as any).mockImplementation((event: string, callback: (data: { url: string }) => void) => {
-        if (event === 'browser-najest.ate') {
-          najest.ateCallback = callback;
-        }
-      });
-
       act(() => {
-        if (najest.ateCallback) {
-          najest.ateCallback({ url: 'https://najest.ated.com' });
-        }
+        // Trigger the browser-navigate callback
+        const callbacks = mockCallbacks['browser-navigate'] || [];
+        callbacks.forEach(cb => cb({ url: 'https://navigated.com' }));
       });
 
-      expect(result.current.browserUrl).toBe('https://najest.ated.com');
-      expect(result.current.inputUrl).toBe('https://najest.ated.com');
+      expect(result.current.browserUrl).toBe('https://navigated.com');
+      expect(result.current.inputUrl).toBe('https://navigated.com');
     });
 
-    it('should handle server-najest.ate event', () => {
+    it('should handle server-navigate event', () => {
       const { result } = renderHook(() => useBrowserState(true));
 
-      let najest.ateCallback: ((data: { url: string }) => void) | null = null;
-
-      (browserService.on as any).mockImplementation((event: string, callback: (data: { url: string }) => void) => {
-        if (event === 'server-najest.ate') {
-          najest.ateCallback = callback;
-        }
-      });
-
       act(() => {
-        if (najest.ateCallback) {
-          najest.ateCallback({ url: 'https://server.com' });
-        }
+        // Trigger the server-navigate callback
+        const callbacks = mockCallbacks['server-navigate'] || [];
+        callbacks.forEach(cb => cb({ url: 'https://server.com' }));
       });
 
-      expect(result.current.webjest.wSrc).toBe('https://server.com');
+      expect(result.current.webviewSrc).toBe('https://server.com');
       expect(result.current.browserUrl).toBe('https://server.com');
       expect(result.current.inputUrl).toBe('https://server.com');
     });
@@ -375,31 +374,31 @@ describe('useBrowserState Hook', () => {
       const { result } = renderHook(() => useBrowserState(true));
 
       act(() => {
-        result.current.najest.ateTo('http://example.com');
+        result.current.navigateTo('http://example.com');
       });
 
-      expect(browserService.najest.ate).toHaveBeenCalledWith('http://example.com');
+      expect(browserService.navigate).toHaveBeenCalledWith('http://example.com');
     });
 
     it('should handle URL with https prefix', () => {
       const { result } = renderHook(() => useBrowserState(true));
 
       act(() => {
-        result.current.najest.ateTo('https://example.com');
+        result.current.navigateTo('https://example.com');
       });
 
-      expect(browserService.najest.ate).toHaveBeenCalledWith('https://example.com');
+      expect(browserService.navigate).toHaveBeenCalledWith('https://example.com');
     });
 
     it('should handle URL with FTP protocol', () => {
       const { result } = renderHook(() => useBrowserState(true));
 
       act(() => {
-        result.current.najest.ateTo('ftp://example.com');
+        result.current.navigateTo('ftp://example.com');
       });
 
       // Should not add https:// to ftp URLs
-      expect(browserService.najest.ate).toHaveBeenCalledWith('ftp://example.com');
+      expect(browserService.navigate).toHaveBeenCalledWith('ftp://example.com');
     });
 
     it('should handle very long URLs', () => {
@@ -407,10 +406,10 @@ describe('useBrowserState Hook', () => {
       const longUrl = 'https://example.com/' + 'a'.repeat(1000);
 
       act(() => {
-        result.current.najest.ateTo(longUrl);
+        result.current.navigateTo(longUrl);
       });
 
-      expect(browserService.najest.ate).toHaveBeenCalledWith(longUrl);
+      expect(browserService.navigate).toHaveBeenCalledWith(longUrl);
     });
 
     it('should handle URLs with special characters', () => {
@@ -418,10 +417,10 @@ describe('useBrowserState Hook', () => {
       const specialUrl = 'https://example.com/path?query=value&other=123#anchor';
 
       act(() => {
-        result.current.najest.ateTo(specialUrl);
+        result.current.navigateTo(specialUrl);
       });
 
-      expect(browserService.najest.ate).toHaveBeenCalledWith(specialUrl);
+      expect(browserService.navigate).toHaveBeenCalledWith(specialUrl);
     });
   });
 

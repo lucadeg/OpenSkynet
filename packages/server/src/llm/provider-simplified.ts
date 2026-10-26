@@ -6,6 +6,23 @@
 import type { ToolCall, LLMResponse, ToolDefinition, ProviderInfo, ModelInfo } from "../core/types";
 import { LLMError, AuthError, RateLimitError } from "../core/errors";
 import type { ProviderPreset } from "./provider-loader";
+import { FailoverTracker } from "./failover";
+import { retryWithBackoff, isRetryable, calculateRetryDelay } from './retry-handler';
+import { listProviders as listProvidersFn } from './provider-factory';
+import {
+  buildMessages,
+  toOpenAITools,
+  toAnthropicTools,
+  validateMessage,
+  filterValidMessages,
+  ensureSystemMessage,
+  extractToolCalls
+} from './message-builder';
+import {
+  processOpenAIStream,
+  ToolCallAccumulator,
+  isStreamComplete
+} from './streaming-handler';
 import OpenAI from "openai";
 
 // Re-export from new modules
@@ -175,9 +192,11 @@ export abstract class LLMProvider {
   getInfo(): ProviderInfo {
     return {
       name: this.constructor.name,
-      label: this.constructor.name,
-      models: [],
-      defaultModel: ''
+      default_model: '',
+      category: 'inference',
+      needs_api_key: true,
+      has_key: false,
+      auto_detect: false
     };
   }
 }
@@ -189,15 +208,24 @@ export abstract class LLMProvider {
 export class OpenAICompatibleProvider extends LLMProvider {
   protected client: OpenAI;
   protected model: string;
+  protected apiKey?: string;
   protected baseUrl?: string;
 
   constructor(model: string, apiKey?: string, baseUrl?: string) {
     super();
     this.model = model;
+    this.apiKey = apiKey;
     this.baseUrl = baseUrl;
+
+    // MiniMax China API requires custom default headers
+    const isMiniMax = baseUrl?.includes('minimax') || baseUrl?.includes('minimaxi');
+
     this.client = new OpenAI({
       apiKey: apiKey ?? "unused",
       baseURL: baseUrl ?? undefined,
+      defaultHeaders: isMiniMax ? {
+        'Authorization': `Bearer ${apiKey}`
+      } : undefined,
     });
   }
 
@@ -205,9 +233,9 @@ export class OpenAICompatibleProvider extends LLMProvider {
    * Check if this is a MiniMax provider
    */
   protected isMiniMax(): boolean {
-    return this.model.startsWith('MiniMax-') ||
-           this.baseUrl?.includes('minimax') ||
-           this.baseUrl?.includes('minimaxi');
+    return (this.model?.startsWith('MiniMax-') || false) ||
+           (this.baseUrl?.includes('minimax') || false) ||
+           (this.baseUrl?.includes('minimaxi') || false);
   }
 
   /**
@@ -216,15 +244,38 @@ export class OpenAICompatibleProvider extends LLMProvider {
   protected buildOpenAIMessages(
     messages: Message[],
     system?: string
-  ): OpenAI.Chat.CompletionMessageParam[] {
-    const out: OpenAI.Chat.CompletionMessageParam[] = [];
+  ): OpenAI.Chat.ChatCompletionMessageParam[] {
+    const out: OpenAI.Chat.ChatCompletionMessageParam[] = [];
 
-    if (system) {
-      out.push({ role: "system", content: system });
-    }
+    // For MiniMax, we must NOT have multiple system messages
+    if (this.isMiniMax()) {
+      // Check if messages already contain a system message
+      const existingSystem = messages.find(m => m.role === 'system');
 
-    for (const m of messages) {
-      out.push(m as OpenAI.Chat.CompletionMessageParam);
+      if (existingSystem && system) {
+        // Merge both system messages into one
+        out.push({ role: "system", content: `${system}\n\n${(existingSystem.content || '')}` });
+      } else if (system) {
+        out.push({ role: "system", content: system });
+      } else if (existingSystem) {
+        out.push(existingSystem as OpenAI.Chat.ChatCompletionMessageParam);
+      }
+
+      // Add all non-system messages
+      for (const m of messages) {
+        if (m.role !== 'system') {
+          out.push(m as OpenAI.Chat.ChatCompletionMessageParam);
+        }
+      }
+    } else {
+      // Standard OpenAI format - allow multiple system messages
+      if (system) {
+        out.push({ role: "system", content: system });
+      }
+
+      for (const m of messages) {
+        out.push(m as OpenAI.Chat.ChatCompletionMessageParam);
+      }
     }
 
     return out;
@@ -252,7 +303,7 @@ export class OpenAICompatibleProvider extends LLMProvider {
         if (this.isMiniMax() && error?.message?.includes('unknown error (1000)')) {
           return 10000 + (attempt * 5000);
         }
-        return undefined; // Use default exponential backoff
+        return 0; // Use default exponential backoff
       }
     });
 
@@ -327,8 +378,8 @@ export class OpenAICompatibleProvider extends LLMProvider {
 
     return {
       text: fullContent,
-      toolCalls: accumulator.getToolCalls(),
-      usage: null // TODO: Extract from response
+      tool_calls: accumulator.getToolCalls(),
+      done: true
     };
   }
 
@@ -357,12 +408,8 @@ export class OpenAICompatibleProvider extends LLMProvider {
 
     return {
       text: content,
-      toolCalls,
-      usage: {
-        promptTokens: response.usage?.prompt_tokens || 0,
-        completionTokens: response.usage?.completion_tokens || 0,
-        totalTokens: response.usage?.total_tokens || 0
-      }
+      tool_calls: toolCalls,
+      done: true
     };
   }
 
@@ -372,9 +419,11 @@ export class OpenAICompatibleProvider extends LLMProvider {
   getInfo(): ProviderInfo {
     return {
       name: 'OpenAI-Compatible',
-      label: 'OpenAI-Compatible Provider',
-      models: [this.model],
-      defaultModel: this.model
+      default_model: this.model || '',
+      category: 'inference',
+      needs_api_key: true,
+      has_key: !!this.apiKey,
+      auto_detect: false
     };
   }
 }
@@ -410,7 +459,7 @@ export const PROVIDERS_LEGACY = new Proxy({} as Record<string, ProviderPreset>, 
 });
 
 export async function listProvidersWithAuth(): Promise<ProviderInfo[]> {
-  const providers = listProviders();
+  const providers = listProvidersFn();
   for (const p of providers) {
     if (p.needs_api_key) {
       p.has_key = await hasKey(p.name);

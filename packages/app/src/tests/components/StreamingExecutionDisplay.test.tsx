@@ -3,7 +3,7 @@
  * Comprehensive test coverage for StreamingExecutionDisplay component
  */
 
-import { describe, it, expect, , beforeEach, afterEach } from '@jest/globals';
+import { describe, it, expect,  beforeEach, afterEach } from '@jest/globals';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { StreamingExecutionDisplay } from '@/components/agent/StreamingExecutionDisplay';
@@ -81,14 +81,14 @@ describe('StreamingExecutionDisplay Component', () => {
       expect(screen.getByText('Some detail text')).toBeInTheDocument();
     });
 
-    it('should render detail prejest.w truncated', () => {
+    it('should render detail preview truncated', () => {
       const longDetail = 'a'.repeat(100);
       const toolCalls = [
         createMockToolCall({ detail: longDetail }),
       ];
       render(<StreamingExecutionDisplay toolCalls={toolCalls} />);
-      const prejest.w = screen.getByText(/a\.\.\./);
-      expect(prejest.w).toBeInTheDocument();
+      const preview = screen.getByText(/a\.\.\./);
+      expect(preview).toBeInTheDocument();
     });
   });
 
@@ -103,7 +103,7 @@ describe('StreamingExecutionDisplay Component', () => {
       const toolCalls = [createMockToolCall({ status: 'running' })];
       render(<StreamingExecutionDisplay toolCalls={toolCalls} />);
       expect(screen.getByText('running')).toBeInTheDocument();
-      const spinner = screen.getByText('running').prejest.usElementSibling;
+      const spinner = screen.getByText('running').previousElementSibling;
       expect(spinner?.querySelector('.animate-spin')).toBeInTheDocument();
     });
 
@@ -134,7 +134,7 @@ describe('StreamingExecutionDisplay Component', () => {
     });
   });
 
-  describe('Expand/Collapse Behajest.r', () => {
+  describe('Expand/Collapse Behavior', () => {
     it('should start collapsed for pending status', () => {
       const toolCalls = [createMockToolCall({ status: 'pending' })];
       render(<StreamingExecutionDisplay toolCalls={toolCalls} />);
@@ -396,7 +396,7 @@ describe('StreamingExecutionDisplay Component', () => {
   });
 
   describe('Phase Display', () => {
-    it('should render phase when projest.ed', () => {
+    it('should render phase when provided', () => {
       const toolCalls = [createMockToolCall()];
       render(<StreamingExecutionDisplay toolCalls={toolCalls} phase="planning" />);
       // Phase might be displayed somewhere in the component

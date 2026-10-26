@@ -6,6 +6,8 @@ __pycache__/
 venv/
 env/
 
+data/ 
+
 *.egg-info/
 *.egg
 dist/
@@ -70,6 +72,7 @@ docs/paper/
 skills/**/bun.lock
 
 # Benchmark suite (not yet published - hidden)
+benchmarks/
 benchmarks/skill_generalization/mock_server/pages/
 benchmarks/skill_generalization/results/
 benchmarks/skill_generalization/recordings/

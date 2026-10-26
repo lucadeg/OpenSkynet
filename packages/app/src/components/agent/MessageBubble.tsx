@@ -13,7 +13,7 @@ import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
 import { useState, memo, useCallback } from 'react';
 import { ExecutionDisplay } from './ExecutionDisplay';
-import { formatThinkLabel } from '@/utils/thinkTagParser';
+import { formatThinkLabel, parseThinkTags } from '@/utils/thinkTagParser';
 import { VS_CODES, SPACING, TYPOGRAPHY, RADIUS } from '@/styles/vscode-constants';
 
 // ============================================================================
@@ -130,12 +130,17 @@ const ThinkingBlock = memo(function ThinkingBlock({
 
       {isExpanded && (
         <div
-          className="mt-1.5 pl-4 whitespace-pre-wrap break-words border-l-2"
+          className="mt-1.5 pl-4 border-l-2"
           style={{
             color: 'var(--vscode-descriptionForeground)',
             borderColor: 'var(--vscode-border-color)',
             padding: '8px 12px',
-            lineHeight: 1.5,
+            lineHeight: 1.6,
+            whiteSpace: 'pre-wrap',
+            wordBreak: 'break-word',
+            overflowWrap: 'break-word',
+            fontFamily: 'var(--font-mono)',
+            fontSize: '12px'
           }}
         >
           {content}
@@ -160,6 +165,16 @@ export const MessageBubble = memo(function MessageBubble({
   const [copied, setCopied] = useState(false);
   const [localThinkingExpanded, setLocalThinkingExpanded] = useState(isThinkingExpanded);
 
+  // Debug logging
+  console.log('[MessageBubble] Rendering message:', {
+    id: message.id,
+    role: message.role,
+    content: message.content?.substring(0, 50),
+    contentLength: message.content?.length,
+    status: message.status,
+    isStreaming
+  });
+
   const handleCopy = useCallback(() => {
     navigator.clipboard.writeText(message.content);
     setCopied(true);
@@ -175,9 +190,12 @@ export const MessageBubble = memo(function MessageBubble({
   const attachments = message.attachments;
   const content = message.content || (isStreaming ? '▊' : '');
 
-  // Parse thinking content
+  // Parse thinking content from message.thinking OR from message.content
   let thinkBlocks: Array<{ content: string; label?: string }> = [];
+  let visibleContent = content;
+
   if (message.thinking) {
+    // Use stored thinking if available
     if (typeof message.thinking === 'string') {
       thinkBlocks = [{ content: message.thinking, label: 'Thinking' }];
     } else {
@@ -185,6 +203,16 @@ export const MessageBubble = memo(function MessageBubble({
         content: tb.content,
         label: formatThinkLabel(tb),
       }));
+    }
+  } else if (content && content.includes('<think')) {
+    // Extract think tags from content if not already stored
+    const parsed = parseThinkTags(content);
+    if (parsed.hasThinking) {
+      thinkBlocks = parsed.thinking.map(tb => ({
+        content: tb.content,
+        label: formatThinkLabel(tb),
+      }));
+      visibleContent = parsed.visible;
     }
   }
 
@@ -328,7 +356,7 @@ export const MessageBubble = memo(function MessageBubble({
               }}
             >
               <div className="whitespace-pre-wrap break-words">
-                {content}
+                {visibleContent}
               </div>
             </div>
 
@@ -430,10 +458,71 @@ export const MessageBubble = memo(function MessageBubble({
                     >
                       {children}
                     </a>
+                  ),
+                  table: ({ children }) => (
+                    <div className="my-4 overflow-x-auto">
+                      <table
+                        className="border-collapse"
+                        style={{
+                          width: '100%',
+                          borderCollapse: 'collapse',
+                          fontSize: '13px'
+                        }}
+                      >
+                        {children}
+                      </table>
+                    </div>
+                  ),
+                  thead: ({ children }) => (
+                    <thead
+                      style={{
+                        backgroundColor: 'var(--vscode-list-hoverBackground)',
+                        borderBottom: '1px solid var(--vscode-border-color)'
+                      }}
+                    >
+                      {children}
+                    </thead>
+                  ),
+                  tbody: ({ children }) => <tbody>{children}</tbody>,
+                  tr: ({ children }) => (
+                    <tr
+                      className="border-b"
+                      style={{
+                        borderBottom: '1px solid var(--vscode-border-color)'
+                      }}
+                    >
+                      {children}
+                    </tr>
+                  ),
+                  th: ({ children }) => (
+                    <th
+                      className="px-3 py-2 text-left font-semibold"
+                      style={{
+                        padding: '8px 12px',
+                        textAlign: 'left',
+                        fontWeight: 600,
+                        color: 'var(--vscode-foreground)',
+                        borderRight: '1px solid var(--vscode-border-color)'
+                      }}
+                    >
+                      {children}
+                    </th>
+                  ),
+                  td: ({ children }) => (
+                    <td
+                      className="px-3 py-2"
+                      style={{
+                        padding: '8px 12px',
+                        borderRight: '1px solid var(--vscode-border-color)',
+                        color: 'var(--vscode-foreground)'
+                      }}
+                    >
+                      {children}
+                    </td>
                   )
                 }}
               >
-                {content}
+                {visibleContent}
               </ReactMarkdown>
             </div>
 

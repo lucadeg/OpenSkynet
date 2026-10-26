@@ -118,7 +118,8 @@ export class BrowserAgent {
     this.skillEngine = opts.skillEngine ?? null;
     this.skillSearch = opts.skillSearch ?? null;
     this.toolBus = opts.toolBus ?? new ToolBus();
-    this.streamEmitter = new StreamEmitter({ batchSize: 10, flushIntervalMs: 50 });
+    // Optimized for fast first token - content flushes immediately
+    this.streamEmitter = new StreamEmitter({ batchSize: 1, flushIntervalMs: 5 });
     this.useVision = opts.useVision ?? true;
 
     this.conversation = [];
@@ -160,6 +161,7 @@ export class BrowserAgent {
     return buildSystemPrompt({
       task: 'Browser automation',
       category: 'browser',
+      plan: { steps: [] }, // Empty plan for browser automation
       iteration: 0,
       soul: '',
       useVision: this.useVision
@@ -207,8 +209,8 @@ export class BrowserAgent {
     }
 
     // Initialize memory
-    if (hasMemory({ memory: this.memory })) {
-      await initializeMemory(this.memory);
+    if (hasMemory({ memory: this.memory || undefined })) {
+      await initializeMemory(this.memory!);
     }
 
     // Prepare coordinator options
@@ -228,7 +230,8 @@ export class BrowserAgent {
     const result = await executeAgentLoop(
       coordinatorOpts,
       task,
-      parseAgentResponse,
+      // Wrapper to convert (text, toolCalls) signature to ParseResponseOptions
+      (text: string, toolCalls?: any[]) => parseAgentResponse({ text, toolCalls }),
       () => captureVisionState(
         this.browserController,
         this.useVision
@@ -243,7 +246,7 @@ export class BrowserAgent {
           agentMemory: this.agentMemory
         }
       ),
-      (toolName, toolArgs, iteration) => this.executeToolCall(toolName, toolArgs, iteration),
+      (toolName, toolArgs, actionsTaken, iteration) => this.executeToolCall(toolName, toolArgs, actionsTaken, iteration),
       this.streamEmitter,
       [] // steps array - populated during execution
     );
@@ -254,8 +257,8 @@ export class BrowserAgent {
     this.conversation = result.conversation;
 
     // Finalize memory
-    if (hasMemory({ memory: this.memory })) {
-      await finalizeTaskMemory(this.memory);
+    if (hasMemory({ memory: this.memory || undefined })) {
+      await finalizeTaskMemory(this.memory!);
     }
 
     return {
@@ -278,7 +281,7 @@ export class BrowserAgent {
     toolArgs: Record<string, unknown>,
     actionsTaken: string[],
     stepNumber: number
-  ): Promise<{ success: boolean; output: string; error?: string }> {
+  ): Promise<{ success: boolean; output: string; error?: string; consecutiveFailures: number }> {
     this.streamEmitter.emitStepStart('executing', toolName, JSON.stringify(toolArgs));
 
     try {
@@ -303,6 +306,7 @@ export class BrowserAgent {
         success: result.success,
         output: result.output || '',
         error: result.error,
+        consecutiveFailures: this.consecutiveFailures
       };
     } catch (error) {
       this.consecutiveFailures++;
@@ -311,7 +315,7 @@ export class BrowserAgent {
 
       this.streamEmitter.emitStepComplete('executing', toolName, errMsg, false);
 
-      return { success: false, output: '', error: errMsg };
+      return { success: false, output: '', error: errMsg, consecutiveFailures: this.consecutiveFailures };
     }
   }
 
@@ -333,11 +337,11 @@ export class BrowserAgent {
   /**
    * Get available skills (if skill engine is configured)
    */
-  getAvailableSkills(): string[] {
+  getAvailableSkills(): Array<Record<string, unknown>> {
     if (!this.skillEngine) return [];
     return listSkills({
       skillEngine: this.skillEngine,
-      skillSearch: this.skillSearch,
+      skillSearch: this.skillSearch || undefined,
       toolBus: this.toolBus
     });
   }

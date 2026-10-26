@@ -51,6 +51,7 @@ export interface Config {
   enableBatchExecution: boolean;
   maxBatchSize: number;
   batchChangeDetection: "strict" | "loose";
+  enableParallelExecution: boolean;
   // P0: Structured validation
   enableStructuredValidation: boolean;
   strictResponseParsing: boolean;
@@ -197,6 +198,7 @@ export function getConfig(): Config {
     enableBatchExecution: _envBool("SEDIMAN_BATCH_EXECUTION", "true"),
     maxBatchSize: parseInt(process.env.SEDIMAN_MAX_BATCH_SIZE ?? "5", 10),
     batchChangeDetection: (process.env.SEDIMAN_BATCH_CHANGE_DETECTION as "strict" | "loose") ?? "loose",
+    enableParallelExecution: _envBool("SEDIMAN_PARALLEL_EXECUTION", "true"),
 
     // P0: Structured validation
     enableStructuredValidation: _envBool("SEDIMAN_STRUCTURED_VALIDATION", "true"),
@@ -240,8 +242,8 @@ export function getConfig(): Config {
     // P2: Flash mode
     enableFlashMode: _envBool("SEDIMAN_FLASH_MODE", "true"),
     flashModeKeywords: (process.env.SEDIMAN_FLASH_MODE_KEYWORDS ?? "navigate to,go to,open,click,screenshot,scroll,type,fill form").split(",").map(k => k.trim()).filter(Boolean),
-    flashModeSkipThinking: _envBool("SEDIMAN_FLASH_SKIP_THINKING", "true"),
-    flashModeSkipEvaluation: _envBool("SEDIMAN_FLASH_SKIP_EVALUATION", "true"),
+    flashModeSkipThinking: _envBool("SEDIMAN_FLASH_SKIP_THINKING", "false"),
+    flashModeSkipEvaluation: _envBool("SEDIMAN_FLASH_SKIP_EVALUATION", "false"),
 
     // P3: Conversation persistence
     autoExportConversations: _envBool("SEDIMAN_AUTO_EXPORT_CONVERSATIONS", "false"),

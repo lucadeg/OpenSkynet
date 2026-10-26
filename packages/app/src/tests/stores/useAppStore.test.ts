@@ -3,14 +3,9 @@
  * Comprehensive test coverage for useAppStore
  */
 
-import { describe, it, expect, , beforeEach, afterEach } from '@jest/globals';
+import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import { renderHook, act } from '@testing-library/react';
 import { useAppStore } from '@/stores/useAppStore';
-
-// Mock document
-jest.mock('../ssr', () => ({
-  isServer: () => false,
-}));
 
 describe('useAppStore', () => {
   beforeEach(() => {
@@ -20,7 +15,7 @@ describe('useAppStore', () => {
       autoConnect: true,
       theme: 'dark',
       model: '',
-      projest.er: '',
+      provider: '',
       agentStatus: {
         state: 'idle',
         rpcConnected: false,
@@ -33,19 +28,10 @@ describe('useAppStore', () => {
       stealth: false,
     });
 
-    // Mock document
-    Object.defineProperty(global, 'document', {
-      value: {
-        documentElement: {
-          classList: {
-            add: jest.fn(),
-            remove: jest.fn(),
-            contains: jest.fn(),
-          },
-        },
-      },
-      writable: true,
-    });
+    // Mock document classList
+    document.documentElement.classList.add = jest.fn();
+    document.documentElement.classList.remove = jest.fn();
+    document.documentElement.classList.contains = jest.fn();
   });
 
   afterEach(() => {
@@ -73,9 +59,9 @@ describe('useAppStore', () => {
       expect(result.current.model).toBe('');
     });
 
-    it('should initialize with empty projest.er', () => {
+    it('should initialize with empty provider', () => {
       const { result } = renderHook(() => useAppStore());
-      expect(result.current.projest.er).toBe('');
+      expect(result.current.provider).toBe('');
     });
 
     it('should initialize with sidebar open', () => {
@@ -266,8 +252,8 @@ describe('useAppStore', () => {
 
     it('should handle all valid page values', () => {
       const { result } = renderHook(() => useAppStore());
-      const pages: Array<'agent' | 'projects' | 'models' | 'projest.er' | 'memory' | 'sessions' | 'skills' | 'logs' | 'schedule' | 'settings'> = [
-        'agent', 'projects', 'models', 'projest.er', 'memory', 'sessions', 'skills', 'logs', 'schedule', 'settings',
+      const pages: Array<'agent' | 'projects' | 'models' | 'provider' | 'memory' | 'sessions' | 'skills' | 'logs' | 'schedule' | 'settings'> = [
+        'agent', 'projects', 'models', 'provider', 'memory', 'sessions', 'skills', 'logs', 'schedule', 'settings',
       ];
 
       pages.forEach(page => {
@@ -411,7 +397,7 @@ describe('useAppStore', () => {
       );
     });
 
-    it('should remove prejest.us theme class when switching', () => {
+    it('should remove previous theme class when switching', () => {
       const { result } = renderHook(() => useAppStore());
 
       act(() => {
@@ -422,7 +408,7 @@ describe('useAppStore', () => {
         result.current.setColorTheme('purple');
       });
 
-      expect(document.documentElement.classList.remove).toHaveBeenCalledWith('theme-blue');
+      expect(document.documentElement.classList.remove).toHaveBeenCalledWith('theme-blue', 'theme-purple', 'theme-green', 'theme-rose', 'theme-cyan');
       expect(document.documentElement.classList.add).toHaveBeenCalledWith('theme-purple');
     });
   });
@@ -462,36 +448,36 @@ describe('useAppStore', () => {
   });
 
   describe('Projest.er Management', () => {
-    it('should set projest.er', () => {
+    it('should set provider', () => {
       const { result } = renderHook(() => useAppStore());
 
       act(() => {
-        result.current.setProjest.er('openai');
+        result.current.setProvider('openai');
       });
 
-      expect(result.current.projest.er).toBe('openai');
+      expect(result.current.provider).toBe('openai');
     });
 
-    it('should log projest.er setting', () => {
+    it('should log provider setting', () => {
       const consoleSpy = jest.spyOn(console, 'log');
       const { result } = renderHook(() => useAppStore());
 
       act(() => {
-        result.current.setProjest.er('anthropic');
+        result.current.setProvider('anthropic');
       });
 
-      expect(consoleSpy).toHaveBeenCalledWith('Setting projest.er:', 'anthropic');
+      expect(consoleSpy).toHaveBeenCalledWith('Setting provider:', 'anthropic');
       consoleSpy.mockRestore();
     });
 
-    it('should set projest.er to empty string', () => {
+    it('should set provider to empty string', () => {
       const { result } = renderHook(() => useAppStore());
 
       act(() => {
-        result.current.setProjest.er('');
+        result.current.setProvider('');
       });
 
-      expect(result.current.projest.er).toBe('');
+      expect(result.current.provider).toBe('');
     });
   });
 
@@ -526,20 +512,20 @@ describe('useAppStore', () => {
       const { result } = renderHook(() => useAppStore());
 
       act(() => {
-        result.current.setModel('gpt-4-turbo-1106-jest.ion-prejest.w');
+        result.current.setModel('gpt-4-turbo-1106-jest.ion-preview');
       });
 
-      expect(result.current.model).toBe('gpt-4-turbo-1106-jest.ion-prejest.w');
+      expect(result.current.model).toBe('gpt-4-turbo-1106-jest.ion-preview');
     });
 
-    it('should handle setting projest.er with special characters', () => {
+    it('should handle setting provider with special characters', () => {
       const { result } = renderHook(() => useAppStore());
 
       act(() => {
-        result.current.setProjest.er('azure-openai-test');
+        result.current.setProvider('azure-openai-test');
       });
 
-      expect(result.current.projest.er).toBe('azure-openai-test');
+      expect(result.current.provider).toBe('azure-openai-test');
     });
 
     it('should handle API URL with special characters', () => {
@@ -556,8 +542,8 @@ describe('useAppStore', () => {
   describe('Type Safety', () => {
     it('should accept all valid page values', () => {
       const { result } = renderHook(() => useAppStore());
-      const pages: Array<'agent' | 'projects' | 'models' | 'projest.er' | 'memory' | 'sessions' | 'skills' | 'logs' | 'schedule' | 'settings'> = [
-        'agent', 'projects', 'models', 'projest.er', 'memory', 'sessions', 'skills', 'logs', 'schedule', 'settings',
+      const pages: Array<'agent' | 'projects' | 'models' | 'provider' | 'memory' | 'sessions' | 'skills' | 'logs' | 'schedule' | 'settings'> = [
+        'agent', 'projects', 'models', 'provider', 'memory', 'sessions', 'skills', 'logs', 'schedule', 'settings',
       ];
 
       pages.forEach(page => {
